@@ -10,7 +10,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-GITHUB_REPO="BearHero520/LLLED"
+GITHUB_REPO="BearHero520/LLLEDTEST"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 INSTALL_DIR="/opt/ugreen-led-controller"
 
