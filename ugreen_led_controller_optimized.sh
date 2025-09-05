@@ -3,10 +3,10 @@
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
 #!/bin/bash
-# UGREEN LED控制器优化版 v2.0.9
-# 白色LED配色方案更新
+# UGREEN LED控制器优化版 v2.1.1
+# 支持硬盘热插拔检测和自动更新 + 热插拔测试工具
 
-VERSION="2.0.9"
+VERSION="2.1.1"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -497,15 +497,33 @@ set_disk_led() {
     esac
 }
 
-# 优化的智能硬盘状态显示
+# 优化的智能硬盘状态显示（支持重新扫描）
 smart_disk_status() {
     echo -e "${CYAN}=== 智能硬盘状态显示 ===${NC}"
     echo "时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "硬盘数量: ${#DISKS[@]}"
     echo "====================================="
     
+    # 提供重新扫描选项
     if [[ ${#DISKS[@]} -eq 0 ]]; then
         echo -e "${RED}未检测到硬盘设备${NC}"
-        return 1
+        echo -e "${YELLOW}是否重新扫描硬盘设备？ (y/N)${NC}"
+        read -r rescan
+        if [[ "$rescan" =~ ^[Yy]$ ]]; then
+            echo -e "${CYAN}重新扫描硬盘设备...${NC}"
+            if detect_disk_mapping_hctl; then
+                echo -e "${GREEN}✓ HCTL重新检测成功${NC}"
+            else
+                echo -e "${YELLOW}⚠ HCTL检测失败，使用备用方式...${NC}"
+                detect_disk_mapping_fallback
+            fi
+            if [[ ${#DISKS[@]} -eq 0 ]]; then
+                echo -e "${RED}仍未检测到硬盘设备${NC}"
+                return 1
+            fi
+        else
+            return 1
+        fi
     fi
     
     # 表头
@@ -585,23 +603,107 @@ smart_disk_status() {
     echo -e "${CYAN}说明: 离线硬盘的LED将被关闭${NC}"
 }
 
-# 实时硬盘活动监控
+# 实时硬盘活动监控（支持热插拔检测）
 real_time_monitor() {
     echo -e "${CYAN}启动实时硬盘监控 (按Ctrl+C停止)...${NC}"
+    echo -e "${GRAY}选择热插拔扫描间隔:${NC}"
+    echo "1) 快速模式 (2秒) - 快速响应，但系统负载较高"
+    echo "2) 标准模式 (30秒) - 平衡性能和响应速度"
+    echo "3) 节能模式 (60秒) - 最低系统负载"
+    read -p "请选择模式 (1-3, 默认2): " scan_mode
+    
+    local scan_interval
+    case "$scan_mode" in
+        1) scan_interval=2; echo -e "${YELLOW}已选择快速模式 (2秒间隔)${NC}" ;;
+        3) scan_interval=60; echo -e "${GREEN}已选择节能模式 (60秒间隔)${NC}" ;;
+        *) scan_interval=30; echo -e "${CYAN}已选择标准模式 (30秒间隔)${NC}" ;;
+    esac
+    
+    echo -e "${GRAY}支持热插拔检测，每${scan_interval}秒自动重新扫描硬盘设备${NC}"
+    echo -e "${GRAY}按 'r' + Enter 可手动重新扫描${NC}"
     
     trap 'echo -e "\n${YELLOW}停止监控${NC}"; return' INT
     
+    local scan_counter=0
+    local last_disk_count=${#DISKS[@]}
+    
     while true; do
+        # 检查是否有输入（非阻塞）
+        if read -t 0.1 -n 1 manual_input 2>/dev/null; then
+            if [[ "$manual_input" == "r" || "$manual_input" == "R" ]]; then
+                echo -e "${YELLOW}手动重新扫描硬盘设备...${NC}" >&2
+                scan_counter=0  # 重置计数器，触发扫描
+                sleep 1
+                continue
+            fi
+        fi
+        
+        # 每N秒重新扫描硬盘设备（根据用户选择的间隔）
+        if (( scan_counter % scan_interval == 0 )); then
+            # 快速模式下减少扫描信息输出，避免界面干扰
+            if [[ $scan_interval -le 5 ]]; then
+                echo -e "${YELLOW}扫描中...${NC}" >&2
+            else
+                echo -e "${YELLOW}正在重新扫描硬盘设备...${NC}" >&2
+            fi
+            
+            # 保存当前的LED映射
+            local old_disk_led_map
+            declare -A old_disk_led_map
+            for disk in "${!DISK_LED_MAP[@]}"; do
+                old_disk_led_map["$disk"]="${DISK_LED_MAP[$disk]}"
+            done
+            
+            # 重新检测硬盘
+            if detect_disk_mapping_hctl; then
+                if [[ $scan_interval -gt 5 ]]; then
+                    echo -e "${GREEN}✓ HCTL重新检测成功${NC}" >&2
+                fi
+            else
+                if [[ $scan_interval -gt 5 ]]; then
+                    echo -e "${YELLOW}⚠ HCTL检测失败，使用备用方式...${NC}" >&2
+                fi
+                detect_disk_mapping_fallback
+            fi
+            
+            # 检查是否有新硬盘
+            if [[ ${#DISKS[@]} -ne $last_disk_count ]]; then
+                echo -e "${GREEN}检测到硬盘数量变化: $last_disk_count -> ${#DISKS[@]}${NC}" >&2
+                last_disk_count=${#DISKS[@]}
+                # 快速模式下缩短提示显示时间
+                if [[ $scan_interval -le 5 ]]; then
+                    sleep 1
+                else
+                    sleep 2
+                fi
+            fi
+        fi
+        
         clear
         echo -e "${CYAN}=== 实时硬盘活动监控 ===${NC}"
         echo "$(date '+%Y-%m-%d %H:%M:%S')"
+        echo "扫描模式: ${scan_interval}秒间隔 | 计数: $scan_counter"
+        echo "硬盘总数: ${#DISKS[@]}"
         echo "================================"
+        
+        local active_count=0
+        local idle_count=0
+        local error_count=0
+        local offline_count=0
         
         for disk in "${DISKS[@]}"; do
             local status=$(get_disk_status "$disk")
             local led_name="${DISK_LED_MAP[$disk]}"
             
             set_disk_led "$disk" "$status"
+            
+            # 统计状态
+            case "$status" in
+                "active") ((active_count++)) ;;
+                "idle") ((idle_count++)) ;;
+                "error") ((error_count++)) ;;
+                "offline") ((offline_count++)) ;;
+            esac
             
             # 状态图标
             local status_icon
@@ -617,9 +719,12 @@ real_time_monitor() {
         done
         
         echo "================================"
-        echo "按 Ctrl+C 停止监控"
+        echo "状态统计: 活动:$active_count 空闲:$idle_count 错误:$error_count 离线:$offline_count"
+        echo "按 Ctrl+C 停止监控 | 按 'r' + Enter 手动重新扫描"
         echo -e "${GRAY}说明: ⚫离线状态将关闭LED灯光${NC}"
-        sleep 2
+        
+        ((scan_counter++))
+        sleep 1
     done
     
     trap - INT
@@ -958,11 +1063,81 @@ show_menu() {
     echo "7) 夜间模式"
     echo "8) 显示硬盘映射"
     echo "9) 配置硬盘映射"
+    echo "t) 热插拔检测测试"
+    echo "r) 重新扫描硬盘设备"
     echo "d) 删除脚本 (卸载)"
     echo "s) 恢复系统LED (电源+网络)"
     echo "0) 退出"
     echo "=================================="
     echo -n "请选择: "
+}
+
+# 硬盘热插拔检测测试
+test_hotplug_detection() {
+    echo -e "${CYAN}=== 硬盘热插拔检测测试 ===${NC}"
+    echo "此功能将监控硬盘设备的插拔变化"
+    echo "适用于测试热插拔响应和故障排除"
+    echo "====================================="
+    
+    # 检查当前硬盘数量
+    echo -e "${YELLOW}当前检测到的硬盘设备:${NC}"
+    local current_disks=()
+    for disk in /dev/sd[a-z] /dev/nvme[0-9]n[0-9]; do
+        if [[ -b "$disk" ]]; then
+            echo "  $disk"
+            current_disks+=("$disk")
+        fi
+    done
+    
+    echo
+    echo -e "${BLUE}设备统计:${NC}"
+    local sata_count=$(ls /dev/sd[a-z] 2>/dev/null | wc -l)
+    local nvme_count=$(ls /dev/nvme[0-9]n[0-9] 2>/dev/null | wc -l)
+    echo "  SATA设备: $sata_count 个"
+    echo "  NVMe设备: $nvme_count 个"
+    echo "  总计: ${#current_disks[@]} 个硬盘"
+    
+    echo
+    echo -e "${CYAN}开始监控硬盘变化 (按Ctrl+C停止)...${NC}"
+    echo "请尝试插入或拔出硬盘来测试检测功能"
+    echo "======================================"
+    
+    local previous_count=${#current_disks[@]}
+    echo "初始硬盘数量: $previous_count"
+    
+    trap 'echo -e "\n${YELLOW}停止热插拔检测测试${NC}"; return' INT
+    
+    while true; do
+        local new_disks=()
+        for disk in /dev/sd[a-z] /dev/nvme[0-9]n[0-9]; do
+            if [[ -b "$disk" ]]; then
+                new_disks+=("$disk")
+            fi
+        done
+        
+        local current_count=${#new_disks[@]}
+        
+        if [[ $current_count -ne $previous_count ]]; then
+            echo "$(date '+%H:%M:%S'): 硬盘数量变化: $previous_count -> $current_count"
+            
+            if [[ $current_count -gt $previous_count ]]; then
+                echo -e "${GREEN}  ✓ 检测到新硬盘插入${NC}"
+            else
+                echo -e "${RED}  ✗ 检测到硬盘移除${NC}"
+            fi
+            
+            echo "  当前硬盘列表："
+            for disk in "${new_disks[@]}"; do
+                echo "    $disk"
+            done
+            echo "  ---"
+            previous_count=$current_count
+        fi
+        
+        sleep 1
+    done
+    
+    trap - INT
 }
 
 # 卸载脚本
@@ -1026,6 +1201,10 @@ case "${1:-menu}" in
         detect_system
         real_time_monitor
         ;;
+    "--test-hotplug")
+        echo "绿联LED控制工具 - 热插拔检测测试 v$VERSION"
+        test_hotplug_detection
+        ;;
     "--system")
         detect_system
         restore_system_leds
@@ -1043,6 +1222,7 @@ case "${1:-menu}" in
         echo "  --on           打开所有LED"
         echo "  --disk-status  智能硬盘状态显示"
         echo "  --monitor      实时硬盘活动监控"
+        echo "  --test-hotplug 热插拔检测测试"
         echo "  --system       恢复系统LED (电源+网络)"
         echo "  --mapping      显示硬盘映射"
         echo "  --version      显示版本信息"
@@ -1053,7 +1233,7 @@ case "${1:-menu}" in
     "--version")
         echo "绿联LED控制工具 v$VERSION (优化版)"
         echo "项目地址: https://github.com/BearHero520/LLLED"
-        echo "功能: HCTL映射 | 智能检测 | 多LED支持 | 实时监控"
+        echo "功能: HCTL映射 | 智能检测 | 多LED支持 | 实时监控 | 热插拔测试"
         show_supported_devices
         ;;
     "menu"|"")
@@ -1136,6 +1316,25 @@ case "${1:-menu}" in
                     ;;
                 9)
                     interactive_config
+                    read -p "按回车继续..."
+                    ;;
+                t|T)
+                    test_hotplug_detection
+                    read -p "按回车继续..."
+                    ;;
+                r|R)
+                    echo -e "${CYAN}重新扫描硬盘设备...${NC}"
+                    local old_count=${#DISKS[@]}
+                    if detect_disk_mapping_hctl; then
+                        echo -e "${GREEN}✓ HCTL重新检测成功${NC}"
+                    else
+                        echo -e "${YELLOW}⚠ HCTL检测失败，使用备用方式...${NC}"
+                        detect_disk_mapping_fallback
+                    fi
+                    echo -e "${BLUE}硬盘数量: $old_count -> ${#DISKS[@]}${NC}"
+                    if [[ ${#DISKS[@]} -gt $old_count ]]; then
+                        echo -e "${GREEN}检测到新硬盘，已自动配置LED映射${NC}"
+                    fi
                     read -p "按回车继续..."
                     ;;
                 d|D)
