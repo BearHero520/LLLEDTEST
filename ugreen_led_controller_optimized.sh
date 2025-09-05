@@ -18,6 +18,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m'
 
 # 全局变量声明
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UGREEN_LEDS_CLI=""
 AVAILABLE_LEDS=()
 DISK_LEDS=()
@@ -56,6 +57,7 @@ detect_led_controller() {
     
     UGREEN_LEDS_CLI=""
     local search_paths=(
+        "$SCRIPT_DIR/ugreen_leds_cli"
         "/opt/ugreen-led-controller/ugreen_leds_cli"
         "/usr/bin/ugreen_leds_cli"
         "/usr/local/bin/ugreen_leds_cli"
@@ -638,14 +640,22 @@ launch_color_config() {
     # 检查颜色配置脚本是否存在
     local color_script="$SCRIPT_DIR/scripts/color_menu.sh"
     
-    if [[ -f "$color_script" ]]; then
-        echo -e "${GREEN}启动颜色配置界面...${NC}"
+    if [[ -f "$color_script" && -s "$color_script" ]]; then
+        echo -e "${GREEN}启动完整颜色配置界面...${NC}"
         # 确保脚本有执行权限
         chmod +x "$color_script"
         bash "$color_script"
     else
-        echo -e "${YELLOW}颜色配置脚本不存在，请重新安装LLLED系统${NC}"
-        echo -e "${CYAN}安装命令: wget -O install.sh https://github.com/BearHero520/LLLEDTEST/raw/main/quick_install.sh && sudo bash install.sh${NC}"
+        echo -e "${RED}❌ 颜色配置脚本不存在或为空${NC}"
+        echo -e "${YELLOW}这可能是因为：${NC}"
+        echo "  1. 安装不完整"
+        echo "  2. 文件下载失败"
+        echo "  3. 权限问题"
+        echo ""
+        echo -e "${CYAN}解决方案：${NC}"
+        echo "  重新安装LLLED系统："
+        echo "  wget -O install.sh https://github.com/BearHero520/LLLEDTEST/raw/main/quick_install.sh"
+        echo "  sudo bash install.sh"
         read -p "按回车继续..."
     fi
 }
