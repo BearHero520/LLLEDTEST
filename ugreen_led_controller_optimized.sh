@@ -1243,82 +1243,39 @@ background_service_management() {
             local source_service="$SCRIPT_DIR/systemd/ugreen-led-monitor.service"
             local daemon_script="$SCRIPT_DIR/scripts/led_daemon.sh"
             
-            # 检查必要文件是否存在
+            # 检查必要文件
             local missing_files=()
+            [[ ! -f "$source_service" ]] && missing_files+=("systemd/ugreen-led-monitor.service")
+            [[ ! -f "$daemon_script" ]] && missing_files+=("scripts/led_daemon.sh")
             
-            if [[ ! -f "$source_service" ]]; then
-                missing_files+=("systemd/ugreen-led-monitor.service")
-            fi
-            
-            if [[ ! -f "$daemon_script" ]]; then
-                missing_files+=("scripts/led_daemon.sh")
-            fi
-            
-            # 如果有缺失文件，尝试下载
+            # 下载缺失文件
             if [[ ${#missing_files[@]} -gt 0 ]]; then
-                echo -e "${YELLOW}检测到缺失文件，正在下载...${NC}"
-                
-                # 创建必要目录
-                mkdir -p "$SCRIPT_DIR/systemd"
-                mkdir -p "$SCRIPT_DIR/scripts"
+                echo -e "${YELLOW}下载缺失文件...${NC}"
+                mkdir -p "$SCRIPT_DIR/systemd" "$SCRIPT_DIR/scripts"
                 
                 for file in "${missing_files[@]}"; do
-                    echo -e "${YELLOW}下载: $file${NC}"
                     if wget -q -O "$SCRIPT_DIR/$file" "https://raw.githubusercontent.com/BearHero520/LLLED/main/$file"; then
                         echo -e "${GREEN}✓ $file${NC}"
                     else
-                        echo -e "${RED}✗ 下载失败: $file${NC}"
-                        echo -e "${RED}安装失败，请检查网络连接${NC}"
+                        echo -e "${RED}✗ 下载失败，请检查网络连接${NC}"
                         return 1
                     fi
                 done
-                
-                # 设置执行权限
                 chmod +x "$SCRIPT_DIR/scripts/"*.sh 2>/dev/null
             fi
             
-            # 安装systemd服务
-            echo -e "${CYAN}安装systemd服务...${NC}"
-            
-            if cp "$source_service" "$service_file"; then
-                echo -e "${GREEN}✓ 服务文件已复制${NC}"
+            # 安装服务
+            if cp "$source_service" "$service_file" && systemctl daemon-reload && systemctl enable ugreen-led-monitor.service; then
+                echo -e "${GREEN}✓ 服务安装完成${NC}"
                 
-                # 重载systemd配置
-                systemctl daemon-reload
-                echo -e "${GREEN}✓ systemd配置已重载${NC}"
-                
-                # 启用服务
-                if systemctl enable ugreen-led-monitor.service; then
-                    echo -e "${GREEN}✓ 服务已设置为开机自启动${NC}"
-                else
-                    echo -e "${RED}✗ 启用服务失败${NC}"
-                    return 1
-                fi
-                
-                # 询问是否现在启动服务
-                echo
-                read -p "是否现在启动服务？ (y/N): " start_now
+                read -p "现在启动服务？ (y/N): " start_now
                 if [[ "$start_now" =~ ^[Yy]$ ]]; then
-                    if systemctl start ugreen-led-monitor.service; then
-                        echo -e "${GREEN}✓ 服务已启动${NC}"
-                    else
-                        echo -e "${YELLOW}⚠ 服务启动失败，可能需要手动启动${NC}"
-                    fi
+                    systemctl start ugreen-led-monitor.service && echo -e "${GREEN}✓ 服务已启动${NC}"
                 fi
                 
-                echo
-                echo -e "${GREEN}🎉 Systemd服务安装完成！${NC}"
-                echo -e "${CYAN}服务功能:${NC}"
-                echo "  🔄 自动监控硬盘插拔"
-                echo "  💾 实时检测硬盘活动和休眠状态"
-                echo "  🌟 SSH断开后继续自动工作"
-                echo "  🚀 开机自启动"
-                echo
-                echo -e "${YELLOW}提示: 退出SSH后，插入硬盘对应的LED灯会自动亮起！${NC}"
-                
+                echo -e "${CYAN}🎉 安装成功！退出SSH后硬盘插拔会自动响应LED${NC}"
             else
-                echo -e "${RED}✗ 复制服务文件失败${NC}"
-                return 1
+                echo -e "${RED}✗ 安装失败${NC}"
             fi
             ;;
             
