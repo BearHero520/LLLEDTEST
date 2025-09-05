@@ -3,10 +3,10 @@
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
 #!/bin/bash
-# UGREEN LED控制器优化版 v2.1.1
-# 支持硬盘热插拔检测和自动更新 + 热插拔测试工具
+# UGREEN LED控制器优化版 v2.1.2
+# 支持硬盘热插拔检测和自动更新 + 热插拔测试工具 + 后台服务管理
 
-VERSION="2.1.1"
+VERSION="2.1.2"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -606,17 +606,31 @@ smart_disk_status() {
 # 实时硬盘活动监控（支持热插拔检测）
 real_time_monitor() {
     echo -e "${CYAN}启动实时硬盘监控 (按Ctrl+C停止)...${NC}"
-    echo -e "${GRAY}选择热插拔扫描间隔:${NC}"
-    echo "1) 快速模式 (2秒) - 快速响应，但系统负载较高"
-    echo "2) 标准模式 (30秒) - 平衡性能和响应速度"
-    echo "3) 节能模式 (60秒) - 最低系统负载"
+    echo "======================================="
+    echo -e "${YELLOW}选择热插拔扫描间隔模式:${NC}"
+    echo "1) 快速模式 (2秒) - 快速响应热插拔，系统负载较高"
+    echo "2) 标准模式 (30秒) - 平衡性能和响应速度 [推荐]"
+    echo "3) 节能模式 (60秒) - 最低系统负载，节能运行"
+    echo "======================================="
     read -p "请选择模式 (1-3, 默认2): " scan_mode
     
     local scan_interval
     case "$scan_mode" in
-        1) scan_interval=2; echo -e "${YELLOW}已选择快速模式 (2秒间隔)${NC}" ;;
-        3) scan_interval=60; echo -e "${GREEN}已选择节能模式 (60秒间隔)${NC}" ;;
-        *) scan_interval=30; echo -e "${CYAN}已选择标准模式 (30秒间隔)${NC}" ;;
+        1) 
+            scan_interval=2
+            echo -e "${YELLOW}✓ 已选择快速模式 (2秒间隔)${NC}"
+            echo -e "${GRAY}注意: 此模式系统负载较高，适合测试使用${NC}"
+            ;;
+        3) 
+            scan_interval=60
+            echo -e "${GREEN}✓ 已选择节能模式 (60秒间隔)${NC}"
+            echo -e "${GRAY}此模式最节能，适合长期运行${NC}"
+            ;;
+        *) 
+            scan_interval=30
+            echo -e "${CYAN}✓ 已选择标准模式 (30秒间隔)${NC}"
+            echo -e "${GRAY}推荐模式，平衡性能和功耗${NC}"
+            ;;
     esac
     
     echo -e "${GRAY}支持热插拔检测，每${scan_interval}秒自动重新扫描硬盘设备${NC}"
@@ -1057,12 +1071,14 @@ show_menu() {
     echo "1) 关闭所有LED"
     echo "2) 打开所有LED"
     echo "3) 智能硬盘状态显示"
-    echo "4) 实时硬盘活动监控"
+    echo "4) 实时硬盘活动监控 (可配置扫描间隔: 2s/30s/60s)"
     echo "5) 彩虹效果"
     echo "6) 节能模式"
     echo "7) 夜间模式"
     echo "8) 显示硬盘映射"
     echo "9) 配置硬盘映射"
+    echo "b) 后台服务管理 (自动监控硬盘状态和插拔)"
+    echo "c) 配置扫描间隔 (2s/30s/60s)"
     echo "t) 热插拔检测测试"
     echo "r) 重新扫描硬盘设备"
     echo "d) 删除脚本 (卸载)"
@@ -1070,6 +1086,202 @@ show_menu() {
     echo "0) 退出"
     echo "=================================="
     echo -n "请选择: "
+}
+
+# 配置扫描间隔设置
+configure_scan_interval() {
+    echo -e "${CYAN}=== 扫描间隔配置 ===${NC}"
+    echo "当前可用的扫描间隔模式："
+    echo "======================================="
+    echo "1) 快速模式 (2秒) - 快速响应热插拔，系统负载较高"
+    echo "2) 标准模式 (30秒) - 平衡性能和响应速度 [推荐]"
+    echo "3) 节能模式 (60秒) - 最低系统负载，节能运行"
+    echo "======================================="
+    echo "说明："
+    echo "• 快速模式: 适合测试和频繁插拔硬盘的场景"
+    echo "• 标准模式: 适合日常使用，推荐选择"
+    echo "• 节能模式: 适合服务器长期运行，减少系统负载"
+    echo
+    echo "注意: 此配置仅影响实时监控功能中的热插拔检测间隔"
+    echo "      每次进入实时监控时仍可重新选择间隔"
+}
+
+# 后台服务管理
+background_service_management() {
+    echo -e "${CYAN}=== 后台服务管理 ===${NC}"
+    echo "UGREEN LED自动监控服务"
+    echo "功能: 自动监控硬盘状态变化和插拔事件"
+    echo "状态监控: 活动(白色) | 休眠(淡白色) | 离线(关闭)"
+    echo "======================================="
+    
+    # 检查服务状态
+    local daemon_script="/opt/ugreen-led-controller/scripts/led_daemon.sh"
+    local service_status="未知"
+    
+    if [[ -f "/var/run/ugreen-led-monitor.pid" ]] && kill -0 "$(cat "/var/run/ugreen-led-monitor.pid")" 2>/dev/null; then
+        service_status="运行中"
+        echo -e "${GREEN}✓ 服务状态: 运行中 (PID: $(cat "/var/run/ugreen-led-monitor.pid"))${NC}"
+    else
+        service_status="已停止"
+        echo -e "${RED}✗ 服务状态: 已停止${NC}"
+    fi
+    
+    # 检查systemd服务状态
+    if systemctl is-enabled ugreen-led-monitor.service >/dev/null 2>&1; then
+        local systemd_status=$(systemctl is-active ugreen-led-monitor.service)
+        echo -e "${BLUE}Systemd服务: 已启用 ($systemd_status)${NC}"
+    else
+        echo -e "${YELLOW}Systemd服务: 未启用${NC}"
+    fi
+    
+    echo
+    echo "管理选项:"
+    echo "1) 启动后台服务"
+    echo "2) 停止后台服务"
+    echo "3) 重启后台服务"
+    echo "4) 查看服务状态"
+    echo "5) 查看服务日志"
+    echo "6) 安装systemd服务 (开机自启)"
+    echo "7) 卸载systemd服务"
+    echo "0) 返回主菜单"
+    echo
+    
+    read -p "请选择操作 (1-7/0): " service_choice
+    
+    case $service_choice in
+        1)
+            echo -e "${CYAN}启动后台服务...${NC}"
+            echo "选择扫描间隔:"
+            echo "1) 快速模式 (2秒)"
+            echo "2) 标准模式 (30秒) [推荐]"
+            echo "3) 节能模式 (60秒)"
+            read -p "请选择 (1-3, 默认2): " interval_choice
+            
+            local scan_interval
+            case "$interval_choice" in
+                1) scan_interval=2 ;;
+                3) scan_interval=60 ;;
+                *) scan_interval=30 ;;
+            esac
+            
+            if [[ -f "$daemon_script" ]]; then
+                "$daemon_script" start "$scan_interval"
+            else
+                echo -e "${RED}后台服务脚本不存在: $daemon_script${NC}"
+                echo "请确保LLLED系统完整安装"
+            fi
+            ;;
+            
+        2)
+            echo -e "${CYAN}停止后台服务...${NC}"
+            if [[ -f "$daemon_script" ]]; then
+                "$daemon_script" stop
+            else
+                echo "手动停止服务..."
+                if [[ -f "/var/run/ugreen-led-monitor.pid" ]]; then
+                    local pid=$(cat "/var/run/ugreen-led-monitor.pid")
+                    if kill -0 "$pid" 2>/dev/null; then
+                        kill "$pid"
+                        rm -f "/var/run/ugreen-led-monitor.pid"
+                        echo -e "${GREEN}✓ 服务已停止${NC}"
+                    else
+                        echo "服务未运行"
+                        rm -f "/var/run/ugreen-led-monitor.pid"
+                    fi
+                else
+                    echo "服务未运行"
+                fi
+            fi
+            ;;
+            
+        3)
+            echo -e "${CYAN}重启后台服务...${NC}"
+            if [[ -f "$daemon_script" ]]; then
+                "$daemon_script" restart
+            else
+                echo -e "${RED}后台服务脚本不存在${NC}"
+            fi
+            ;;
+            
+        4)
+            echo -e "${CYAN}查看服务状态...${NC}"
+            if [[ -f "$daemon_script" ]]; then
+                "$daemon_script" status
+            else
+                echo "手动检查服务状态..."
+                if [[ -f "/var/run/ugreen-led-monitor.pid" ]] && kill -0 "$(cat "/var/run/ugreen-led-monitor.pid")" 2>/dev/null; then
+                    echo -e "${GREEN}✓ 服务正在运行 (PID: $(cat "/var/run/ugreen-led-monitor.pid"))${NC}"
+                else
+                    echo -e "${RED}✗ 服务未运行${NC}"
+                fi
+            fi
+            ;;
+            
+        5)
+            echo -e "${CYAN}查看服务日志...${NC}"
+            local log_file="/var/log/ugreen-led-monitor.log"
+            if [[ -f "$log_file" ]]; then
+                echo "最近的20条日志记录:"
+                tail -20 "$log_file"
+                echo
+                echo "按 Ctrl+C 停止日志跟踪"
+                read -p "是否实时跟踪日志？ (y/N): " follow_logs
+                if [[ "$follow_logs" =~ ^[Yy]$ ]]; then
+                    tail -f "$log_file"
+                fi
+            else
+                echo -e "${YELLOW}日志文件不存在: $log_file${NC}"
+                echo "检查systemd日志:"
+                journalctl -u ugreen-led-monitor.service --no-pager -n 20
+            fi
+            ;;
+            
+        6)
+            echo -e "${CYAN}安装systemd服务 (开机自启)...${NC}"
+            local service_file="/etc/systemd/system/ugreen-led-monitor.service"
+            local source_service="/opt/ugreen-led-controller/systemd/ugreen-led-monitor.service"
+            
+            if [[ -f "$source_service" ]]; then
+                cp "$source_service" "$service_file"
+                systemctl daemon-reload
+                systemctl enable ugreen-led-monitor.service
+                echo -e "${GREEN}✓ Systemd服务已安装并启用${NC}"
+                echo "服务将在下次重启时自动启动"
+                echo
+                read -p "是否现在启动服务？ (y/N): " start_now
+                if [[ "$start_now" =~ ^[Yy]$ ]]; then
+                    systemctl start ugreen-led-monitor.service
+                    echo -e "${GREEN}✓ 服务已启动${NC}"
+                fi
+            else
+                echo -e "${RED}服务文件不存在: $source_service${NC}"
+            fi
+            ;;
+            
+        7)
+            echo -e "${CYAN}卸载systemd服务...${NC}"
+            echo -e "${YELLOW}确认要卸载systemd服务吗？ (y/N)${NC}"
+            read -r confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                systemctl stop ugreen-led-monitor.service 2>/dev/null
+                systemctl disable ugreen-led-monitor.service 2>/dev/null
+                rm -f "/etc/systemd/system/ugreen-led-monitor.service"
+                systemctl daemon-reload
+                echo -e "${GREEN}✓ Systemd服务已卸载${NC}"
+            else
+                echo -e "${YELLOW}取消操作${NC}"
+            fi
+            ;;
+            
+        0)
+            echo -e "${YELLOW}返回主菜单${NC}"
+            return 0
+            ;;
+            
+        *)
+            echo -e "${RED}无效选择${NC}"
+            ;;
+    esac
 }
 
 # 硬盘热插拔检测测试
@@ -1316,6 +1528,14 @@ case "${1:-menu}" in
                     ;;
                 9)
                     interactive_config
+                    read -p "按回车继续..."
+                    ;;
+                b|B)
+                    background_service_management
+                    read -p "按回车继续..."
+                    ;;
+                c|C)
+                    configure_scan_interval
                     read -p "按回车继续..."
                     ;;
                 t|T)
