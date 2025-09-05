@@ -637,20 +637,36 @@ launch_color_config() {
     echo -e "${CYAN}=== LED颜色配置管理 ===${NC}"
     echo "======================================"
     
-    # 检查颜色配置脚本是否存在
-    local color_script="$SCRIPT_DIR/scripts/color_menu.sh"
+    # 尝试多个可能的路径
+    local color_scripts=(
+        "$SCRIPT_DIR/scripts/color_menu.sh"
+        "./scripts/color_menu.sh"
+        "/opt/ugreen-led-controller/scripts/color_menu.sh"
+        "scripts/color_menu.sh"
+    )
     
-    if [[ -f "$color_script" && -s "$color_script" ]]; then
+    local color_script=""
+    
+    # 查找存在的脚本文件
+    for script in "${color_scripts[@]}"; do
+        if [[ -f "$script" && -s "$script" ]]; then
+            color_script="$script"
+            echo -e "${GREEN}找到颜色配置脚本: $script${NC}"
+            break
+        fi
+    done
+    
+    if [[ -n "$color_script" ]]; then
         echo -e "${GREEN}启动完整颜色配置界面...${NC}"
         # 确保脚本有执行权限
         chmod +x "$color_script"
         bash "$color_script"
     else
         echo -e "${RED}❌ 颜色配置脚本不存在或为空${NC}"
-        echo -e "${YELLOW}这可能是因为：${NC}"
-        echo "  1. 安装不完整"
-        echo "  2. 文件下载失败"
-        echo "  3. 权限问题"
+        echo -e "${YELLOW}尝试的路径：${NC}"
+        for script in "${color_scripts[@]}"; do
+            echo "  - $script $(test -f "$script" && echo "[存在]" || echo "[不存在]")"
+        done
         echo ""
         echo -e "${CYAN}解决方案：${NC}"
         echo "  重新安装LLLED系统："
