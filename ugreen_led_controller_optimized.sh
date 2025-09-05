@@ -1449,7 +1449,21 @@ background_service_management() {
                 echo
                 read -p "现在启动服务？ (Y/n): " start_now
                 if [[ ! "$start_now" =~ ^[Nn]$ ]]; then
-                    echo -e "${CYAN}启动服务...${NC}"
+                    echo -e "${CYAN}准备启动systemd服务...${NC}"
+                    
+                    # 停止可能运行的手动启动的服务
+                    echo "检查并停止手动启动的后台服务..."
+                    if [[ -f "/var/run/ugreen-led-monitor.pid" ]]; then
+                        local manual_pid=$(cat /var/run/ugreen-led-monitor.pid 2>/dev/null)
+                        if [[ -n "$manual_pid" ]] && kill -0 "$manual_pid" 2>/dev/null; then
+                            echo "发现手动启动的服务进程 (PID: $manual_pid)，正在停止..."
+                            "$daemon_script" stop >/dev/null 2>&1 || kill "$manual_pid" 2>/dev/null || true
+                            sleep 1
+                            echo "✓ 已停止手动启动的服务"
+                        fi
+                    fi
+                    
+                    echo -e "${CYAN}启动systemd服务...${NC}"
                     if systemctl start ugreen-led-monitor.service; then
                         echo -e "${GREEN}✓ 服务已启动${NC}"
                         sleep 2

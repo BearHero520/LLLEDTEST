@@ -375,9 +375,30 @@ background_monitor() {
 start_service() {
     local scan_interval=${1:-30}
     
+    # 检查是否已有进程运行
     if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        echo "服务已在运行"
-        return 1
+        local existing_pid=$(cat "$PID_FILE")
+        log_message "检测到已运行的服务进程: $existing_pid"
+        
+        # 检查是否从systemd启动
+        if [[ "$PPID" == "1" ]] || [[ -n "$INVOCATION_ID" ]]; then
+            # 从systemd启动：停止现有进程并重新启动
+            log_message "从systemd启动，停止现有进程并重新启动"
+            echo "检测到现有进程，正在重启服务..."
+            
+            # 停止现有进程
+            if kill "$existing_pid" 2>/dev/null; then
+                sleep 2
+                log_message "已停止现有进程: $existing_pid"
+            fi
+            
+            # 清理PID文件
+            rm -f "$PID_FILE"
+        else
+            # 手动启动：报告已运行状态
+            echo "服务已在运行 (PID: $existing_pid)"
+            return 1
+        fi
     fi
     
     log_message "启动UGREEN LED监控服务 (扫描间隔: ${scan_interval}秒)..."
@@ -393,15 +414,47 @@ start_service() {
 
 # 停止服务
 stop_service() {
+    local stopped=false
+    
     if [[ -f "$PID_FILE" ]]; then
         local pid=$(cat "$PID_FILE")
+        log_message "尝试停止服务进程: $pid"
+        
         if kill "$pid" 2>/dev/null; then
+            log_message "发送停止信号到进程: $pid"
+            
+            # 等待进程停止
+            local count=0
+            while kill -0 "$pid" 2>/dev/null && [[ $count -lt 10 ]]; do
+                sleep 1
+                ((count++))
+            done
+            
+            if kill -0 "$pid" 2>/dev/null; then
+                log_message "强制停止进程: $pid"
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+            
             log_message "服务已停止"
             echo "✓ 服务已停止"
+            stopped=true
+        else
+            log_message "进程 $pid 不存在或已停止"
+            echo "✓ 进程不存在或已停止"
+            stopped=true
         fi
+        
         rm -f "$PID_FILE"
     else
         echo "服务未运行"
+        log_message "服务未运行 (无PID文件)"
+    fi
+    
+    # 额外清理：查找并停止可能的孤儿进程
+    local orphan_pids=$(pgrep -f "led_daemon.sh.*background" 2>/dev/null || true)
+    if [[ -n "$orphan_pids" ]]; then
+        log_message "发现孤儿进程，正在清理: $orphan_pids"
+        echo "$orphan_pids" | xargs kill 2>/dev/null || true
     fi
 }
 
