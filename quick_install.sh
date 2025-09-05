@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# 绿联LED控制工具 - 一键安装脚本 (增强版)
-# 版本: 2.1.0 (集成颜色自定义功能)
+# 绿联LED控制工具 - 一键安装脚本
+# 版本: 2.1.0
 # 更新时间: 2025-09-06
 # 唯一安装入口: 本脚本是LLLED系统的唯一安装方式
 
@@ -31,10 +31,8 @@ SUPPORTED_MODELS=(
 
 echo -e "${CYAN}================================${NC}"
 echo -e "${CYAN}LLLED 一键安装工具 v2.1.0${NC}"
-echo -e "${CYAN}(增强版 - 颜色自定义+智能监控)${NC}"
 echo -e "${CYAN}================================${NC}"
 echo "更新时间: 2025-09-06"
-echo -e "${YELLOW}⚠️  注意: 这是LLLED系统的唯一安装入口${NC}"
 echo
 echo -e "${YELLOW}支持的UGREEN设备:${NC}"
 for model in "${SUPPORTED_MODELS[@]}"; do
@@ -119,8 +117,6 @@ files=(
     "scripts/led_test.sh"
     "scripts/configure_mapping.sh"
     "scripts/configure_mapping_optimized.sh"
-    "scripts/color_menu.sh"
-    "scripts/smart_status_monitor.sh"
     "config/led_mapping.conf"
     "config/disk_mapping.conf"
 )
@@ -184,8 +180,8 @@ echo -e "${CYAN}║  🎉 LLLED v2.1.0 安装完成！           ║${NC}"
 echo -e "${CYAN}║                                        ║${NC}"
 echo -e "${CYAN}║  使用命令: sudo LLLED                 ║${NC}"
 echo -e "${CYAN}║                                        ║${NC}"
-echo -e "${CYAN}║  🎨 新增颜色自定义功能                ║${NC}"
-echo -e "${CYAN}║  🤖 智能状态监控                      ║${NC}"
+echo -e "${CYAN}║  🚀 智能硬盘监控                      ║${NC}"
+echo -e "${CYAN}║  🌈 彩虹效果支持                      ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
 
 # 最终验证
@@ -202,7 +198,7 @@ echo
 echo -e "${CYAN}================================${NC}"
 echo -e "${CYAN}📖 使用说明${NC}"
 echo -e "${CYAN}================================${NC}"
-echo -e "${GREEN}使用命令: sudo LLLED${NC}        # 🎨 LED控制面板 (含颜色配置)"
+echo -e "${GREEN}使用命令: sudo LLLED${NC}        # �️ LED控制面板"
 echo ""
 echo -e "${YELLOW}项目地址: https://github.com/${GITHUB_REPO}${NC}"
 echo ""

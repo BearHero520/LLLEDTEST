@@ -3,10 +3,10 @@
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
 #!/bin/bash
-# UGREEN LED控制器优化版 v2.0.8
-# 修复HCTL映射使用Host而非Target字段
+# UGREEN LED控制器优化版 v2.0.9
+# 白色LED配色方案更新
 
-VERSION="2.0.7"
+VERSION="2.0.9"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -15,6 +15,8 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+GRAY='\033[0;37m'
 NC='\033[0m'
 
 # 全局变量声明
@@ -465,16 +467,20 @@ set_disk_led() {
     
     case "$status" in
         "active")
-            $UGREEN_LEDS_CLI "$led_name" -color 0 255 0 -on -brightness 255
+            # 活动状态：白色，中等亮度
+            $UGREEN_LEDS_CLI "$led_name" -color 255 255 255 -on -brightness 128
             ;;
         "idle")
-            $UGREEN_LEDS_CLI "$led_name" -color 255 255 0 -on -brightness 64
+            # 空闲状态：淡白色，低亮度
+            $UGREEN_LEDS_CLI "$led_name" -color 255 255 255 -on -brightness 32
             ;;
         "error")
+            # 错误状态：红色闪烁
             $UGREEN_LEDS_CLI "$led_name" -color 255 0 0 -blink 500 500 -brightness 255
             ;;
         "offline")
-            $UGREEN_LEDS_CLI "$led_name" -color 128 128 128 -on -brightness 32
+            # 离线状态：关闭LED
+            $UGREEN_LEDS_CLI "$led_name" -off
             ;;
         "off")
             $UGREEN_LEDS_CLI "$led_name" -off
@@ -515,11 +521,11 @@ smart_disk_status() {
         local status_display
         case "$status" in
             "active") 
-                status_display="${GREEN}●活动${NC}"
+                status_display="${WHITE}●活动${NC}"
                 ((active_count++))
                 ;;
             "idle") 
-                status_display="${YELLOW}●空闲${NC}"
+                status_display="${GRAY}●空闲${NC}"
                 ((idle_count++))
                 ;;
             "error") 
@@ -527,7 +533,7 @@ smart_disk_status() {
                 ((error_count++))
                 ;;
             "offline") 
-                status_display="${MAGENTA}●离线${NC}"
+                status_display="${MAGENTA}⚫离线${NC}"
                 ((offline_count++))
                 ;;
             *) 
@@ -561,12 +567,13 @@ smart_disk_status() {
     if [[ $error_count -gt 0 ]]; then
         echo -e "${RED}⚠ 警告: 检测到 $error_count 个硬盘有错误状态${NC}"
     elif [[ $offline_count -gt 0 ]]; then
-        echo -e "${YELLOW}⚠ 注意: 有 $offline_count 个硬盘离线${NC}"
+        echo -e "${YELLOW}⚠ 注意: 有 $offline_count 个硬盘离线 (LED已关闭)${NC}"
     else
         echo -e "${GREEN}✓ 所有硬盘状态正常${NC}"
     fi
     
     echo -e "${GREEN}智能硬盘状态已更新到LED显示${NC}"
+    echo -e "${CYAN}说明: 离线硬盘的LED将被关闭${NC}"
 }
 
 # 实时硬盘活动监控
@@ -590,8 +597,8 @@ real_time_monitor() {
             # 状态图标
             local status_icon
             case "$status" in
-                "active") status_icon="🟢" ;;
-                "idle") status_icon="🟡" ;;
+                "active") status_icon="⚪" ;;  # 白圆圈表示活动中的白色LED
+                "idle") status_icon="◯" ;;     # 空心圆圈表示淡白色LED
                 "error") status_icon="🔴" ;;
                 "offline") status_icon="⚫" ;;
                 *) status_icon="❓" ;;
@@ -602,6 +609,7 @@ real_time_monitor() {
         
         echo "================================"
         echo "按 Ctrl+C 停止监控"
+        echo -e "${GRAY}说明: ⚫离线状态将关闭LED灯光${NC}"
         sleep 2
     done
     
@@ -612,13 +620,13 @@ real_time_monitor() {
 restore_system_leds() {
     echo -e "${CYAN}恢复系统LED状态...${NC}"
     
-    # 恢复电源LED (绿色常亮)
+    # 恢复电源LED (白色，中等亮度)
     if [[ " ${SYSTEM_LEDS[*]} " =~ " power " ]]; then
-        $UGREEN_LEDS_CLI power -color 0 255 0 -on -brightness 128
-        echo -e "${GREEN}✓ 电源LED已恢复${NC}"
+        $UGREEN_LEDS_CLI power -color 255 255 255 -on -brightness 128
+        echo -e "${GREEN}✓ 电源LED已恢复 (白色)${NC}"
     fi
     
-    # 恢复网络LED (根据网络状态)
+    # 恢复网络LED (根据网络状态) - 保持不变
     if [[ " ${SYSTEM_LEDS[*]} " =~ " netdev " ]]; then
         if ip route | grep -q default; then
             # 有网络连接，蓝色常亮
@@ -629,50 +637,6 @@ restore_system_leds() {
             $UGREEN_LEDS_CLI netdev -color 255 165 0 -on -brightness 64
             echo -e "${YELLOW}✓ 网络LED已恢复 (未连接)${NC}"
         fi
-    fi
-}
-
-# 颜色配置管理
-launch_color_config() {
-    echo -e "${CYAN}=== LED颜色配置管理 ===${NC}"
-    echo "======================================"
-    
-    # 尝试多个可能的路径
-    local color_scripts=(
-        "$SCRIPT_DIR/scripts/color_menu.sh"
-        "./scripts/color_menu.sh"
-        "/opt/ugreen-led-controller/scripts/color_menu.sh"
-        "scripts/color_menu.sh"
-    )
-    
-    local color_script=""
-    
-    # 查找存在的脚本文件
-    for script in "${color_scripts[@]}"; do
-        if [[ -f "$script" && -s "$script" ]]; then
-            color_script="$script"
-            echo -e "${GREEN}找到颜色配置脚本: $script${NC}"
-            break
-        fi
-    done
-    
-    if [[ -n "$color_script" ]]; then
-        echo -e "${GREEN}启动完整颜色配置界面...${NC}"
-        # 确保脚本有执行权限
-        chmod +x "$color_script"
-        bash "$color_script"
-    else
-        echo -e "${RED}❌ 颜色配置脚本不存在或为空${NC}"
-        echo -e "${YELLOW}尝试的路径：${NC}"
-        for script in "${color_scripts[@]}"; do
-            echo "  - $script $(test -f "$script" && echo "[存在]" || echo "[不存在]")"
-        done
-        echo ""
-        echo -e "${CYAN}解决方案：${NC}"
-        echo "  重新安装LLLED系统："
-        echo "  wget -O install.sh https://github.com/BearHero520/LLLEDTEST/raw/main/quick_install.sh"
-        echo "  sudo bash install.sh"
-        read -p "按回车继续..."
     fi
 }
 
@@ -712,8 +676,8 @@ show_disk_mapping() {
         # 状态图标和颜色
         local status_display
         case "$status" in
-            "active") status_display="${GREEN}●活动${NC}" ;;
-            "idle") status_display="${YELLOW}●空闲${NC}" ;;
+            "active") status_display="${WHITE}●活动${NC}" ;;
+            "idle") status_display="${GRAY}●空闲${NC}" ;;
             "error") status_display="${RED}●错误${NC}" ;;
             "offline") status_display="${MAGENTA}●离线${NC}" ;;
             *) status_display="${RED}●未知${NC}" ;;
@@ -985,7 +949,6 @@ show_menu() {
     echo "7) 夜间模式"
     echo "8) 显示硬盘映射"
     echo "9) 配置硬盘映射"
-    echo "c) 颜色配置 (LED颜色自定义)"
     echo "d) 删除脚本 (卸载)"
     echo "s) 恢复系统LED (电源+网络)"
     echo "0) 退出"
@@ -1150,8 +1113,8 @@ case "${1:-menu}" in
                     ;;
                 7) 
                     echo -e "${CYAN}设置夜间模式...${NC}"
-                    $UGREEN_LEDS_CLI all -color 255 255 255 -on -brightness 16
-                    echo -e "${GREEN}夜间模式已设置${NC}"
+                    $UGREEN_LEDS_CLI all -color 255 255 255 -on -brightness 8
+                    echo -e "${GREEN}夜间模式已设置 (低亮度白光)${NC}"
                     read -p "按回车继续..."
                     ;;
                 8)
@@ -1160,10 +1123,6 @@ case "${1:-menu}" in
                     ;;
                 9)
                     interactive_config
-                    read -p "按回车继续..."
-                    ;;
-                c|C)
-                    launch_color_config
                     read -p "按回车继续..."
                     ;;
                 d|D)
