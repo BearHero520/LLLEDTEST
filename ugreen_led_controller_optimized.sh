@@ -409,7 +409,14 @@ get_disk_status() {
     local disk="$1"
     local status="unknown"
     
-    if [[ ! -b "$disk" ]]; then
+    # 更严格的离线检测
+    if [[ ! -b "$disk" ]] || [[ ! -e "$disk" ]] || [[ ! -r "$disk" ]]; then
+        echo "offline"
+        return
+    fi
+    
+    # 尝试读取设备，如果失败则认为离线
+    if ! dd if="$disk" bs=512 count=1 of=/dev/null 2>/dev/null; then
         echo "offline"
         return
     fi
@@ -479,8 +486,10 @@ set_disk_led() {
             $UGREEN_LEDS_CLI "$led_name" -color 255 0 0 -blink 500 500 -brightness 255
             ;;
         "offline")
-            # 离线状态：关闭LED
+            # 离线状态：彻底关闭LED
             $UGREEN_LEDS_CLI "$led_name" -off
+            # 双重确保LED关闭
+            $UGREEN_LEDS_CLI "$led_name" -color 0 0 0 -off -brightness 0
             ;;
         "off")
             $UGREEN_LEDS_CLI "$led_name" -off
@@ -1001,6 +1010,8 @@ case "${1:-menu}" in
         detect_system
         echo "关闭所有LED..."
         $UGREEN_LEDS_CLI all -off
+        # 双重确保彻底关闭
+        $UGREEN_LEDS_CLI all -color 0 0 0 -off -brightness 0
         ;;
     "--on")
         detect_system
@@ -1053,6 +1064,8 @@ case "${1:-menu}" in
             case $choice in
                 1) 
                     $UGREEN_LEDS_CLI all -off
+                    # 双重确保彻底关闭
+                    $UGREEN_LEDS_CLI all -color 0 0 0 -off -brightness 0
                     echo -e "${GREEN}已关闭所有LED${NC}"
                     read -p "按回车继续..."
                     ;;
