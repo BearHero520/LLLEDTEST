@@ -2,9 +2,9 @@
 
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
-# 版本: 2.0.6 (优化版 - 清理重复代码修复语法)
+# 版本: 2.0.7 (优化版 - 修复备用方法覆盖HCTL映射)
 
-VERSION="2.0.6"
+VERSION="2.0.7"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -142,12 +142,14 @@ detect_available_leds() {
 }
 
 # 优化的HCTL硬盘映射检测
+# 新的HCTL硬盘映射检测函数 - 完全重写避免语法错误
 detect_disk_mapping_hctl() {
-    echo -e "${CYAN}使用HCTL方式检测硬盘映射 v2.0.5...${NC}"
+    echo -e "${CYAN}使用HCTL方式检测硬盘映射 v2.0.7...${NC}"
     echo -e "${BLUE}当前可用硬盘LED: ${DISK_LEDS[*]}${NC}"
     
     # 获取所有存储设备的HCTL信息
-    local hctl_info=$(lsblk -S -x hctl -o name,hctl,serial,model,size 2>/dev/null)
+    local hctl_info
+    hctl_info=$(lsblk -S -x hctl -o name,hctl,serial,model,size 2>/dev/null)
     
     if [[ -z "$hctl_info" ]]; then
         echo -e "${YELLOW}无法获取HCTL信息，可能系统不支持或无存储设备${NC}"
@@ -158,85 +160,83 @@ detect_disk_mapping_hctl() {
     echo "$hctl_info"
     echo
     
-    # 解析HCTL信息并建立智能映射
+    # 重置全局变量
     DISKS=()
-    declare -gA DISK_LED_MAP
-    declare -gA DISK_INFO
-    declare -gA DISK_HCTL_MAP
+    DISK_LED_MAP=()
+    DISK_INFO=()
+    DISK_HCTL_MAP=()
     
     local successful_mappings=0
     
-    # 使用更兼容的方式处理HCTL信息
-    local temp_hctl="/tmp/hctl_info_$$"
-    echo "$hctl_info" > "$temp_hctl"
+    # 使用临时文件处理数据，确保变量修改能保留
+    local temp_file="/tmp/hctl_mapping_$$"
+    echo "$hctl_info" > "$temp_file"
     
     while IFS= read -r line; do
         # 跳过标题行和空行
-        [[ "$line" =~ ^NAME ]] && continue
-        [[ -z "$(echo "$line" | tr -d '[:space:]')" ]] && continue
+        if [[ "$line" =~ ^NAME ]] || [[ -z "$(echo "$line" | tr -d '[:space:]')" ]]; then
+            continue
+        fi
         
-        local name=$(echo "$line" | awk '{print $1}')
-        local hctl=$(echo "$line" | awk '{print $2}')
-        local serial=$(echo "$line" | awk '{print $3}')
-        local model=$(echo "$line" | awk '{print $4}')
-        local size=$(echo "$line" | awk '{print $5}')
+        # 解析行内容
+        local name hctl serial model size
+        name=$(echo "$line" | awk '{print $1}')
+        hctl=$(echo "$line" | awk '{print $2}')
+        serial=$(echo "$line" | awk '{print $3}')
+        model=$(echo "$line" | awk '{print $4}')
+        size=$(echo "$line" | awk '{print $5}')
         
-        # 过滤有效的存储设备
+        # 检查是否是有效的存储设备
         if [[ -b "/dev/$name" && "$name" =~ ^sd[a-z]+$ ]]; then
             DISKS+=("/dev/$name")
             
-            # 根据HCTL信息智能映射到LED
-            # HCTL格式: host:channel:target:lun
-            # 对于UGREEN设备，target值与物理槽位有特定对应关系
-            local hctl_host=$(echo "$hctl" | cut -d: -f1)
-            local hctl_channel=$(echo "$hctl" | cut -d: -f2)
-            local hctl_target=$(echo "$hctl" | cut -d: -f3)
+            echo -e "${CYAN}处理设备: /dev/$name (HCTL: $hctl)${NC}"
             
-            # UGREEN设备HCTL target到物理槽位的映射
-            # 基于用户反馈：target 0->槽位1, target 2->槽位3, target 3->槽位4
+            # 提取HCTL target值并映射到LED槽位
+            local hctl_target=$(echo "$hctl" | cut -d: -f3)
             local led_number
+            
             case "$hctl_target" in
                 "0") led_number=1 ;;  # target 0 -> 槽位1 (disk1)
-                "1") led_number=2 ;;  # target 1 -> 槽位2 (disk2)
-                "2") led_number=3 ;;  # target 2 -> 槽位3 (disk3)  
+                "1") led_number=2 ;;  # target 1 -> 槽位2 (disk2) 
+                "2") led_number=3 ;;  # target 2 -> 槽位3 (disk3)
                 "3") led_number=4 ;;  # target 3 -> 槽位4 (disk4)
                 "4") led_number=5 ;;  # target 4 -> 槽位5 (disk5)
                 "5") led_number=6 ;;  # target 5 -> 槽位6 (disk6)
                 "6") led_number=7 ;;  # target 6 -> 槽位7 (disk7)
                 "7") led_number=8 ;;  # target 7 -> 槽位8 (disk8)
-                *) 
-                    # 未知映射，使用target+1作为默认
-                    led_number=$((hctl_target + 1))
-                    echo -e "${YELLOW}⚠ 未知HCTL target: $hctl_target，使用默认映射${NC}"
-                    ;;
+                *) led_number=$((hctl_target + 1)) ;;
             esac
             
             local target_led="disk${led_number}"
             
-            # 强制使用正确的槽位映射，不允许自动重新分配
-            # 这确保了物理槽位和LED的正确对应
-            if [[ " ${DISK_LEDS[*]} " =~ " $target_led " ]]; then
+            # 检查目标LED是否在可用LED列表中
+            local led_available=false
+            for available_led in "${DISK_LEDS[@]}"; do
+                if [[ "$available_led" == "$target_led" ]]; then
+                    led_available=true
+                    break
+                fi
+            done
+            
+            if [[ "$led_available" == "true" ]]; then
                 DISK_LED_MAP["/dev/$name"]="$target_led"
-                echo -e "${GREEN}✓ 强制映射: /dev/$name -> $target_led (HCTL target: $hctl_target)${NC}"
+                echo -e "${GREEN}✓ 映射: /dev/$name -> $target_led (HCTL target: $hctl_target)${NC}"
+                ((successful_mappings++))
             else
-                # 目标LED不存在于可用LED列表中
                 DISK_LED_MAP["/dev/$name"]="none"
-                echo -e "${RED}✗ LED不存在: $target_led (HCTL target: $hctl_target)${NC}"
+                echo -e "${RED}✗ LED不可用: $target_led (HCTL target: $hctl_target)${NC}"
             fi
             
             # 保存设备信息
             DISK_INFO["/dev/$name"]="HCTL:$hctl Serial:${serial:-N/A} Model:${model:-N/A} Size:${size:-N/A}"
             DISK_HCTL_MAP["/dev/$name"]="$hctl"
-            
-            # 统计成功映射数量
-            if [[ "${DISK_LED_MAP["/dev/$name"]}" != "none" ]]; then
-                ((successful_mappings++))
-            fi
         fi
-    done < "$temp_hctl"
+    done < "$temp_file"
     
-    rm -f "$temp_hctl"
+    rm -f "$temp_file"
     
+    echo
     echo -e "${BLUE}检测到 ${#DISKS[@]} 个硬盘，成功映射 $successful_mappings 个${NC}"
     
     if [[ ${#DISKS[@]} -eq 0 ]]; then
@@ -250,32 +250,43 @@ detect_disk_mapping_hctl() {
 detect_disk_mapping_fallback() {
     echo -e "${CYAN}使用备用方式检测硬盘...${NC}"
     
-    DISKS=()
-    declare -gA DISK_LED_MAP
-    declare -gA DISK_INFO
+    # 注意：不要重新初始化DISK_LED_MAP，以保留已有的HCTL映射
+    # DISKS=()  # 保留原有的DISKS数组
+    # declare -gA DISK_LED_MAP  # 不重新初始化，保留HCTL映射
+    # declare -gA DISK_INFO  # 不重新初始化
     
-    local disk_index=0
-    
-    # 检测SATA硬盘
-    for disk in /dev/sd[a-z]; do
-        if [[ -b "$disk" ]]; then
-            DISKS+=("$disk")
-            
-            # 按顺序分配可用的硬盘LED
-            if [[ $disk_index -lt ${#DISK_LEDS[@]} ]]; then
-                DISK_LED_MAP["$disk"]="${DISK_LEDS[$disk_index]}"
-            else
-                DISK_LED_MAP["$disk"]="none"
+    # 如果DISKS数组为空，说明HCTL检测完全失败，需要重新检测
+    if [[ ${#DISKS[@]} -eq 0 ]]; then
+        DISKS=()
+        declare -gA DISK_LED_MAP
+        declare -gA DISK_INFO
+        
+        local disk_index=0
+        
+        # 检测SATA硬盘
+        for disk in /dev/sd[a-z]; do
+            if [[ -b "$disk" ]]; then
+                DISKS+=("$disk")
+                
+                # 按顺序分配可用的硬盘LED
+                if [[ $disk_index -lt ${#DISK_LEDS[@]} ]]; then
+                    DISK_LED_MAP["$disk"]="${DISK_LEDS[$disk_index]}"
+                else
+                    DISK_LED_MAP["$disk"]="none"
+                fi
+                
+                local model=$(lsblk -dno MODEL "$disk" 2>/dev/null | tr -d ' ')
+                local size=$(lsblk -dno SIZE "$disk" 2>/dev/null)
+                DISK_INFO["$disk"]="Model:${model:-N/A} Size:${size:-N/A}"
+                
+                echo -e "${GREEN}✓ $disk -> ${DISK_LED_MAP["$disk"]}${NC}"
+                ((disk_index++))
             fi
-            
-            local model=$(lsblk -dno MODEL "$disk" 2>/dev/null | tr -d ' ')
-            local size=$(lsblk -dno SIZE "$disk" 2>/dev/null)
-            DISK_INFO["$disk"]="Model:${model:-N/A} Size:${size:-N/A}"
-            
-            echo -e "${GREEN}✓ $disk -> ${DISK_LED_MAP["$disk"]}${NC}"
-            ((disk_index++))
-        fi
-    done
+        done
+    else
+        echo -e "${YELLOW}HCTL检测已有结果，跳过备用检测以保留HCTL映射${NC}"
+        echo -e "${BLUE}当前映射: ${#DISKS[@]} 个硬盘已映射${NC}"
+    fi
     
     # 检测NVMe硬盘
     for disk in /dev/nvme[0-9]n[0-9]; do

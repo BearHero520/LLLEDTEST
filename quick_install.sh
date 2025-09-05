@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 绿联LED控制工具 - 一键安装脚本 (优化版)
-# 版本: 2.0.6 (清理重复代码修复语法)
+# 版本: 2.0.7 (修复备用方法覆盖HCTL映射)
 # 更新时间: 2025-09-05
 
 RED='\033[0;31m'
@@ -29,7 +29,7 @@ SUPPORTED_MODELS=(
 [[ $EUID -ne 0 ]] && { echo -e "${RED}需要root权限: sudo bash $0${NC}"; exit 1; }
 
 echo -e "${CYAN}================================${NC}"
-echo -e "${CYAN}LLLED 一键安装工具 v2.0.6${NC}"
+echo -e "${CYAN}LLLED 一键安装工具 v2.0.7${NC}"
 echo -e "${CYAN}(优化版 - HCTL映射+智能检测)${NC}"
 echo -e "${CYAN}================================${NC}"
 echo "更新时间: 2025-09-05"
@@ -108,6 +108,7 @@ files=(
     "verify_detection.sh"
     "debug_mapping.sh"
     "syntax_check.sh"
+    "fix_hctl_mapping.sh"
     "scripts/disk_status_leds.sh"
     "scripts/turn_off_all_leds.sh"
     "scripts/rainbow_effect.sh"
