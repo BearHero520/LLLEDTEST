@@ -20,7 +20,18 @@ GRAY='\033[0;37m'
 NC='\033[0m'
 
 # 全局变量声明
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 获取脚本真实路径 (处理符号链接)
+if command -v readlink >/dev/null 2>&1; then
+    SCRIPT_REAL_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_REAL_PATH")" && pwd)"
+else
+    # 备用方法：假设是从安装目录运行的
+    if [[ "${BASH_SOURCE[0]}" == "/usr/local/bin/LLLED" ]]; then
+        SCRIPT_DIR="/opt/ugreen-led-controller"
+    else
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    fi
+fi
 UGREEN_LEDS_CLI=""
 AVAILABLE_LEDS=()
 DISK_LEDS=()
