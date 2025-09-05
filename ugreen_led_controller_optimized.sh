@@ -2,9 +2,9 @@
 
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
-# 版本: 2.0.2 (优化版 - HCTL映射+准确LED检测)
+# 版本: 2.0.3 (优化版 - 修复HCTL槽位映射)
 
-VERSION="2.0.2"
+VERSION="2.0.3"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -182,17 +182,29 @@ detect_disk_mapping_hctl() {
             
             # 根据HCTL信息智能映射到LED
             # HCTL格式: host:channel:target:lun
+            # 对于UGREEN设备，target值与物理槽位有特定对应关系
             local hctl_host=$(echo "$hctl" | cut -d: -f1)
             local hctl_channel=$(echo "$hctl" | cut -d: -f2)
             local hctl_target=$(echo "$hctl" | cut -d: -f3)
             
-            # 计算LED位置：优先使用target，然后是host
-            local led_number=$((hctl_target + 1))
-            
-            # 如果target映射超出范围，使用host映射
-            if [[ $led_number -gt ${#DISK_LEDS[@]} ]]; then
-                led_number=$((hctl_host + 1))
-            fi
+            # UGREEN设备HCTL target到物理槽位的映射
+            # 基于用户反馈：target 0->槽位1, target 2->槽位3, target 3->槽位4
+            local led_number
+            case "$hctl_target" in
+                "0") led_number=1 ;;  # target 0 -> 槽位1 (disk1)
+                "1") led_number=2 ;;  # target 1 -> 槽位2 (disk2)
+                "2") led_number=3 ;;  # target 2 -> 槽位3 (disk3)  
+                "3") led_number=4 ;;  # target 3 -> 槽位4 (disk4)
+                "4") led_number=5 ;;  # target 4 -> 槽位5 (disk5)
+                "5") led_number=6 ;;  # target 5 -> 槽位6 (disk6)
+                "6") led_number=7 ;;  # target 6 -> 槽位7 (disk7)
+                "7") led_number=8 ;;  # target 7 -> 槽位8 (disk8)
+                *) 
+                    # 未知映射，使用target+1作为默认
+                    led_number=$((hctl_target + 1))
+                    echo -e "${YELLOW}⚠ 未知HCTL target: $hctl_target，使用默认映射${NC}"
+                    ;;
+            esac
             
             local target_led="disk${led_number}"
             
@@ -260,12 +272,13 @@ detect_disk_mapping_hctl() {
             DISK_INFO["/dev/$name"]="HCTL:$hctl Serial:${serial:-N/A} Model:${model:-N/A} Size:${size:-N/A}"
             DISK_HCTL_MAP["/dev/$name"]="$hctl"
             
-            # 显示映射结果
+            # 显示映射结果，包含详细的调试信息
             local led_display="${DISK_LED_MAP["/dev/$name"]}"
             if [[ "$led_display" == "none" ]]; then
-                echo -e "${YELLOW}⚠ /dev/$name -> 无可用LED (HCTL: $hctl)${NC}"
+                echo -e "${YELLOW}⚠ /dev/$name -> 无可用LED (HCTL: $hctl, Target: $hctl_target -> 计算槽位: $led_number)${NC}"
             else
-                echo -e "${GREEN}✓ /dev/$name -> $led_display (HCTL: $hctl, Target: $hctl_target)${NC}"
+                echo -e "${GREEN}✓ /dev/$name -> $led_display (HCTL: $hctl, Target: $hctl_target -> 槽位: $led_number)${NC}"
+                echo -e "    ${CYAN}设备详情: ${model:-N/A} ${size:-N/A} [${serial:-N/A}]${NC}"
                 ((successful_mappings++))
             fi
         fi
