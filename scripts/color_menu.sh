@@ -123,11 +123,13 @@ select_color() {
     echo -e "${BLUE}$prompt${NC}"
     echo "可选颜色:"
     
+    # 创建颜色列表数组
+    local color_list=("红色" "绿色" "蓝色" "白色" "黄色" "青色" "紫色" "橙色" "粉色" "浅绿" "天蓝" "金色" "关闭")
+    
     local i=1
-    local color_names=()
-    for color_name in "${!COLOR_PRESETS[@]}"; do
-        color_names+=("$color_name")
-        echo "  $i) $color_name (${COLOR_PRESETS[$color_name]})"
+    for color_name in "${color_list[@]}"; do
+        local rgb_value="${COLOR_PRESETS[$color_name]}"
+        echo "  $i) $color_name ($rgb_value)"
         ((i++))
     done
     echo "  $i) 自定义RGB"
@@ -151,7 +153,7 @@ select_color() {
                     echo -e "${RED}无效的RGB值，请重试${NC}"
                 fi
             else
-                local selected_color="${color_names[$((choice-1))]}"
+                local selected_color="${color_list[$((choice-1))]}"
                 echo "${COLOR_PRESETS[$selected_color]}"
                 return
             fi

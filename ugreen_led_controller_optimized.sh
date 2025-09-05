@@ -630,6 +630,71 @@ restore_system_leds() {
     fi
 }
 
+# 颜色配置管理
+launch_color_config() {
+    echo -e "${CYAN}=== LED颜色配置管理 ===${NC}"
+    echo "======================================"
+    
+    # 检查颜色配置脚本是否存在
+    local color_script="$SCRIPT_DIR/scripts/color_menu.sh"
+    
+    if [[ -f "$color_script" ]]; then
+        echo -e "${GREEN}启动颜色配置界面...${NC}"
+        bash "$color_script"
+    else
+        echo -e "${YELLOW}颜色配置脚本不存在，正在创建基础版本...${NC}"
+        
+        # 确保目录存在
+        mkdir -p "$SCRIPT_DIR/scripts"
+        
+        # 创建基本的颜色配置脚本
+        cat > "$color_script" << 'COLOREOF'
+#!/bin/bash
+
+# 颜色配置菜单
+show_color_menu() {
+    clear
+    echo -e "\033[36m=== LED颜色配置 ===\033[0m"
+    echo "=========================="
+    echo "1) 硬盘状态颜色设置"
+    echo "2) 系统LED颜色设置"  
+    echo "3) 智能监控颜色配置"
+    echo "4) 预设颜色方案"
+    echo "5) 自定义RGB颜色"
+    echo "0) 返回主菜单"
+    echo "=========================="
+    echo -n "请选择: "
+}
+
+# 颜色配置主循环
+main() {
+    while true; do
+        show_color_menu
+        read -r choice
+        case $choice in
+            1) echo -e "\033[33m硬盘状态颜色设置功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
+            2) echo -e "\033[33m系统LED颜色设置功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
+            3) echo -e "\033[33m智能监控颜色配置功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
+            4) echo -e "\033[33m预设颜色方案功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
+            5) echo -e "\033[33m自定义RGB颜色功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
+            0) break ;;
+            *) echo -e "\033[31m无效选项\033[0m" ; read -p "按回车继续..." ;;
+        esac
+    done
+}
+
+main "$@"
+COLOREOF
+        
+        chmod +x "$color_script"
+        echo -e "${GREEN}✓ 基础颜色配置脚本已创建${NC}"
+        echo -e "${YELLOW}提示: 使用完整安装包可获得全功能颜色配置${NC}"
+        
+        # 启动基础版本
+        bash "$color_script"
+    fi
+}
+
 # 优化的硬盘映射显示
 show_disk_mapping() {
     echo -e "${CYAN}=== 硬盘LED映射状态 ===${NC}"
@@ -939,6 +1004,7 @@ show_menu() {
     echo "7) 夜间模式"
     echo "8) 显示硬盘映射"
     echo "9) 配置硬盘映射"
+    echo "c) 颜色配置 (LED颜色自定义)"
     echo "d) 删除脚本 (卸载)"
     echo "s) 恢复系统LED (电源+网络)"
     echo "0) 退出"
@@ -1091,6 +1157,10 @@ case "${1:-menu}" in
                     ;;
                 9)
                     interactive_config
+                    read -p "按回车继续..."
+                    ;;
+                c|C)
+                    launch_color_config
                     read -p "按回车继续..."
                     ;;
                 d|D)
