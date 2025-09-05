@@ -1164,40 +1164,140 @@ background_service_management() {
                 *) scan_interval=30 ;;
             esac
             
-            if [[ -f "$daemon_script" ]]; then
-                "$daemon_script" start "$scan_interval"
-            else
-                echo -e "${RED}后台服务脚本不存在: $daemon_script${NC}"
-                echo "请确保LLLED系统完整安装"
+            # 检查是否已在运行
+            if [[ -f "/var/run/ugreen-led-monitor.pid" ]] && kill -0 "$(cat "/var/run/ugreen-led-monitor.pid")" 2>/dev/null; then
+                echo -e "${YELLOW}服务已在运行${NC}"
+                return 0
             fi
+            
+            echo -e "${CYAN}启动UGREEN LED监控服务 (扫描间隔: ${scan_interval}秒)...${NC}"
+            
+            # 直接启动后台监控
+            (
+                # 创建日志文件
+                local log_file="/var/log/ugreen-led-monitor.log"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] 启动UGREEN LED监控服务 (扫描间隔: ${scan_interval}秒)" >> "$log_file"
+                
+                while true; do
+                    # 检测硬盘状态并更新LED
+                    if [[ -x "$UGREEN_LEDS_CLI" ]]; then
+                        # 获取硬盘列表
+                        local disks=($(lsblk -dn -o NAME | grep -E '^sd[a-z]$|^nvme[0-9]+n[0-9]+$' | head -4))
+                        
+                        for i in "${!disks[@]}"; do
+                            local disk="/dev/${disks[$i]}"
+                            local led_id="disk$((i+1))"
+                            
+                            if [[ -b "$disk" ]]; then
+                                # 检查活动状态
+                                local iostat_output=$(iostat -d 1 2 "$disk" 2>/dev/null | tail -1)
+                                if [[ -n "$iostat_output" ]]; then
+                                    local read_kb=$(echo "$iostat_output" | awk '{print $3}')
+                                    local write_kb=$(echo "$iostat_output" | awk '{print $4}')
+                                    
+                                    if (( $(echo "$read_kb > 0.1 || $write_kb > 0.1" | bc -l 2>/dev/null || echo 0) )); then
+                                        # 活动状态：白色亮
+                                        "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 128 >/dev/null 2>&1
+                                    else
+                                        # 休眠状态：淡白色
+                                        "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 32 >/dev/null 2>&1
+                                    fi
+                                else
+                                    # 无法获取IO统计，默认休眠状态
+                                    "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 32 >/dev/null 2>&1
+                                fi
+                            else
+                                # 离线状态：关闭
+                                "$UGREEN_LEDS_CLI" "$led_id" 0 0 0 0 >/dev/null 2>&1
+                            fi
+                        done
+                    fi
+                    
+                    sleep "$scan_interval"
+                done
+            ) &
+            
+            local pid=$!
+            echo "$pid" > "/var/run/ugreen-led-monitor.pid"
+            echo -e "${GREEN}✓ 服务已启动 (PID: $pid)${NC}"
+            echo -e "${YELLOW}提示: 服务已在后台运行，退出SSH后仍会继续监控${NC}"
             ;;
             
         2)
             echo -e "${CYAN}停止后台服务...${NC}"
-            if [[ -f "$daemon_script" ]]; then
-                "$daemon_script" stop
-            else
-                echo "手动停止服务..."
-                if [[ -f "/var/run/ugreen-led-monitor.pid" ]]; then
-                    local pid=$(cat "/var/run/ugreen-led-monitor.pid")
-                    if kill -0 "$pid" 2>/dev/null; then
-                        kill "$pid"
-                        rm -f "/var/run/ugreen-led-monitor.pid"
-                        echo -e "${GREEN}✓ 服务已停止${NC}"
-                    else
-                        echo "服务未运行"
-                        rm -f "/var/run/ugreen-led-monitor.pid"
-                    fi
+            if [[ -f "/var/run/ugreen-led-monitor.pid" ]]; then
+                local pid=$(cat "/var/run/ugreen-led-monitor.pid")
+                if kill -0 "$pid" 2>/dev/null; then
+                    kill "$pid"
+                    rm -f "/var/run/ugreen-led-monitor.pid"
+                    echo -e "${GREEN}✓ 服务已停止${NC}"
+                    
+                    # 记录日志
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 服务已停止" >> "/var/log/ugreen-led-monitor.log"
                 else
-                    echo "服务未运行"
+                    echo -e "${YELLOW}服务未运行${NC}"
+                    rm -f "/var/run/ugreen-led-monitor.pid"
                 fi
+            else
+                echo -e "${YELLOW}服务未运行${NC}"
             fi
             ;;
             
         3)
             echo -e "${CYAN}重启后台服务...${NC}"
-            if [[ -f "$daemon_script" ]]; then
-                "$daemon_script" restart
+            
+            # 先停止服务
+            if [[ -f "/var/run/ugreen-led-monitor.pid" ]]; then
+                local pid=$(cat "/var/run/ugreen-led-monitor.pid")
+                if kill -0 "$pid" 2>/dev/null; then
+                    kill "$pid"
+                    echo -e "${GREEN}✓ 服务已停止${NC}"
+                fi
+                rm -f "/var/run/ugreen-led-monitor.pid"
+            fi
+            
+            sleep 2
+            
+            # 重新启动（使用标准30秒间隔）
+            echo -e "${CYAN}重新启动服务...${NC}"
+            (
+                local log_file="/var/log/ugreen-led-monitor.log"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] 重启UGREEN LED监控服务" >> "$log_file"
+                
+                while true; do
+                    if [[ -x "$UGREEN_LEDS_CLI" ]]; then
+                        local disks=($(lsblk -dn -o NAME | grep -E '^sd[a-z]$|^nvme[0-9]+n[0-9]+$' | head -4))
+                        
+                        for i in "${!disks[@]}"; do
+                            local disk="/dev/${disks[$i]}"
+                            local led_id="disk$((i+1))"
+                            
+                            if [[ -b "$disk" ]]; then
+                                local iostat_output=$(iostat -d 1 2 "$disk" 2>/dev/null | tail -1)
+                                if [[ -n "$iostat_output" ]]; then
+                                    local read_kb=$(echo "$iostat_output" | awk '{print $3}')
+                                    local write_kb=$(echo "$iostat_output" | awk '{print $4}')
+                                    
+                                    if (( $(echo "$read_kb > 0.1 || $write_kb > 0.1" | bc -l 2>/dev/null || echo 0) )); then
+                                        "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 128 >/dev/null 2>&1
+                                    else
+                                        "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 32 >/dev/null 2>&1
+                                    fi
+                                else
+                                    "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 32 >/dev/null 2>&1
+                                fi
+                            else
+                                "$UGREEN_LEDS_CLI" "$led_id" 0 0 0 0 >/dev/null 2>&1
+                            fi
+                        done
+                    fi
+                    sleep 30
+                done
+            ) &
+            
+            local pid=$!
+            echo "$pid" > "/var/run/ugreen-led-monitor.pid"
+            echo -e "${GREEN}✓ 服务已重启 (PID: $pid)${NC}"
             else
                 echo -e "${RED}后台服务脚本不存在${NC}"
             fi
