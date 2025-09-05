@@ -1162,12 +1162,11 @@ background_service_management() {
     echo "5) 查看服务日志"
     echo "6) 安装systemd服务 (开机自启)"
     echo "7) 卸载systemd服务"
-    echo "8) 修复systemd服务配置"
-    echo "9) 启动定期状态更新 (基于智能硬盘状态显示)"
+    echo "8) 启动定期状态更新 (基于智能硬盘状态显示)"
     echo "0) 返回主菜单"
     echo
     
-    read -p "请选择操作 (1-9/0): " service_choice
+    read -p "请选择操作 (1-8/0): " service_choice
     
     case $service_choice in
         1)
@@ -1366,32 +1365,64 @@ background_service_management() {
             local source_service="$SCRIPT_DIR/systemd/ugreen-led-monitor.service"
             local daemon_script="$SCRIPT_DIR/scripts/led_daemon.sh"
             
+            # 检查是否已存在服务并进行预处理
+            if [[ -f "$service_file" ]]; then
+                echo -e "${YELLOW}⚠ 检测到已存在的systemd服务${NC}"
+                
+                # 检查当前配置
+                local current_exec=$(grep "ExecStart=" "$service_file" 2>/dev/null || echo "未找到")
+                echo "当前配置: $current_exec"
+                
+                if echo "$current_exec" | grep -q "system_overview.sh"; then
+                    echo -e "${RED}⚠ 检测到错误配置 (指向system_overview.sh)${NC}"
+                    echo -e "${YELLOW}将自动修复配置${NC}"
+                elif echo "$current_exec" | grep -q "led_daemon.sh"; then
+                    echo -e "${GREEN}✓ 配置看起来正确 (指向led_daemon.sh)${NC}"
+                    read -p "检测到已有正确配置，是否重新安装？ (y/N): " reinstall
+                    if [[ ! "$reinstall" =~ ^[Yy]$ ]]; then
+                        echo -e "${YELLOW}保持现有配置，取消安装${NC}"
+                        continue
+                    fi
+                fi
+                
+                echo -e "${CYAN}[1/6] 停止并禁用现有服务...${NC}"
+                systemctl stop ugreen-led-monitor.service 2>/dev/null || true
+                systemctl disable ugreen-led-monitor.service 2>/dev/null || true
+                
+                echo -e "${CYAN}[2/6] 移除旧服务文件...${NC}"
+                rm -f "$service_file"
+                systemctl daemon-reload
+                echo -e "${GREEN}✓ 旧服务已清理${NC}"
+            else
+                echo -e "${GREEN}✓ 首次安装systemd服务${NC}"
+            fi
+            
             # 检查必要文件是否存在
+            echo -e "${CYAN}[3/6] 验证必要文件...${NC}"
             if [[ ! -f "$source_service" ]]; then
                 echo -e "${RED}✗ 服务文件不存在: $source_service${NC}"
                 echo -e "${YELLOW}请确保已正确安装LLLED系统${NC}"
-                return 1
+                continue
             fi
             
             if [[ ! -f "$daemon_script" ]]; then
                 echo -e "${RED}✗ 守护脚本不存在: $daemon_script${NC}"
                 echo -e "${YELLOW}请确保已正确安装LLLED系统${NC}"
-                return 1
+                continue
             fi
             
-            echo -e "${YELLOW}使用现有的systemd服务文件...${NC}"
             echo "服务文件路径: $source_service"
             echo "守护脚本路径: $daemon_script"
             
             # 验证文件内容
-            echo -e "${CYAN}验证服务配置...${NC}"
             if grep -q "ExecStart.*led_daemon.sh" "$source_service"; then
                 echo -e "${GREEN}✓ 服务文件配置正确${NC}"
             else
                 echo -e "${RED}✗ 服务文件配置异常${NC}"
-                return 1
+                continue
             fi
             
+            echo -e "${CYAN}[4/6] 设置文件权限...${NC}"
             if [[ -x "$daemon_script" ]]; then
                 echo -e "${GREEN}✓ 守护脚本可执行${NC}"
             else
@@ -1400,17 +1431,49 @@ background_service_management() {
             fi
             
             # 安装服务
-            if cp "$source_service" "$service_file" && systemctl daemon-reload && systemctl enable ugreen-led-monitor.service; then
-                echo -e "${GREEN}✓ 服务安装完成${NC}"
+            echo -e "${CYAN}[5/6] 安装并启用服务...${NC}"
+            if cp "$source_service" "$service_file" && \
+               chmod 644 "$service_file" && \
+               systemctl daemon-reload && \
+               systemctl enable ugreen-led-monitor.service; then
+                echo -e "${GREEN}✓ 服务安装并启用完成${NC}"
                 
-                read -p "现在启动服务？ (y/N): " start_now
-                if [[ "$start_now" =~ ^[Yy]$ ]]; then
-                    systemctl start ugreen-led-monitor.service && echo -e "${GREEN}✓ 服务已启动${NC}"
+                echo -e "${CYAN}[6/6] 验证安装结果...${NC}"
+                echo "已安装的服务配置:"
+                echo "========================"
+                systemctl cat ugreen-led-monitor.service | grep -E "ExecStart|ExecStop|WorkingDirectory|Type" | while read line; do
+                    echo "  $line"
+                done
+                echo "========================"
+                
+                echo
+                read -p "现在启动服务？ (Y/n): " start_now
+                if [[ ! "$start_now" =~ ^[Nn]$ ]]; then
+                    echo -e "${CYAN}启动服务...${NC}"
+                    if systemctl start ugreen-led-monitor.service; then
+                        echo -e "${GREEN}✓ 服务已启动${NC}"
+                        sleep 2
+                        
+                        # 验证服务状态
+                        if systemctl is-active --quiet ugreen-led-monitor.service; then
+                            echo -e "${GREEN}✓ 服务运行正常${NC}"
+                        else
+                            echo -e "${YELLOW}⚠ 服务可能未正常启动，请查看日志${NC}"
+                        fi
+                    else
+                        echo -e "${RED}✗ 服务启动失败${NC}"
+                        echo "查看错误日志:"
+                        journalctl -u ugreen-led-monitor.service --no-pager -n 5
+                    fi
                 fi
                 
+                echo
                 echo -e "${CYAN}🎉 安装成功！退出SSH后硬盘插拔会自动响应LED${NC}"
+                echo -e "${GREEN}✓ 开机自启已启用${NC}"
+                echo -e "${CYAN}提示: 可以选择选项4查看详细服务状态${NC}"
             else
                 echo -e "${RED}✗ 安装失败${NC}"
+                echo "请检查权限或文件完整性"
             fi
             ;;
             
@@ -1430,65 +1493,6 @@ background_service_management() {
             ;;
             
         8)
-            echo -e "${CYAN}修复systemd服务配置...${NC}"
-            echo "此选项将修复systemd服务文件中的错误配置"
-            echo -e "${YELLOW}注意: 这将重新安装服务文件并重启服务${NC}"
-            echo
-            
-            read -p "确认要修复systemd服务配置吗？ (y/N): " confirm_fix
-            if [[ "$confirm_fix" =~ ^[Yy]$ ]]; then
-                echo -e "${CYAN}停止当前服务...${NC}"
-                systemctl stop ugreen-led-monitor.service 2>/dev/null
-                systemctl disable ugreen-led-monitor.service 2>/dev/null
-                
-                echo -e "${CYAN}移除错误的服务文件...${NC}"
-                rm -f /etc/systemd/system/ugreen-led-monitor.service
-                
-                echo -e "${CYAN}安装正确的服务文件...${NC}"
-                local source_service="$SCRIPT_DIR/systemd/ugreen-led-monitor.service"
-                if [[ -f "$source_service" ]]; then
-                    cp "$source_service" /etc/systemd/system/
-                    chmod 644 /etc/systemd/system/ugreen-led-monitor.service
-                    echo -e "${GREEN}✓ 服务文件已更新${NC}"
-                else
-                    echo -e "${RED}✗ 找不到正确的服务文件${NC}"
-                    return 1
-                fi
-                
-                echo -e "${CYAN}重新加载systemd配置...${NC}"
-                systemctl daemon-reload
-                
-                echo -e "${CYAN}启用服务...${NC}"
-                systemctl enable ugreen-led-monitor.service
-                
-                echo -e "${CYAN}检查服务配置...${NC}"
-                echo "当前服务配置:"
-                echo "========================"
-                systemctl cat ugreen-led-monitor.service | grep -E "ExecStart|WorkingDirectory|Type"
-                echo "========================"
-                
-                echo
-                read -p "现在启动修复后的服务？ (y/N): " start_fixed
-                if [[ "$start_fixed" =~ ^[Yy]$ ]]; then
-                    echo -e "${CYAN}启动服务...${NC}"
-                    if systemctl start ugreen-led-monitor.service; then
-                        echo -e "${GREEN}✓ 服务启动成功${NC}"
-                        sleep 2
-                        systemctl status ugreen-led-monitor.service --no-pager -l
-                    else
-                        echo -e "${RED}✗ 服务启动失败${NC}"
-                        echo "检查详细错误信息:"
-                        journalctl -u ugreen-led-monitor.service --no-pager -n 10
-                    fi
-                fi
-                
-                echo -e "${GREEN}✓ Systemd服务修复完成!${NC}"
-            else
-                echo -e "${YELLOW}取消修复操作${NC}"
-            fi
-            ;;
-            
-        9)
             echo -e "${CYAN}启动定期状态更新 (基于智能硬盘状态显示)...${NC}"
             echo "此模式会定期调用智能硬盘状态显示功能来更新LED"
             echo "优点: 稳定性高，功能完整"
