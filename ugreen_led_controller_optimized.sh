@@ -2,9 +2,9 @@
 
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
-# 版本: 2.0.4 (优化版 - 强制HCTL槽位映射)
+# 版本: 2.0.5 (优化版 - 完全重构HCTL映射)
 
-VERSION="2.0.4"
+VERSION="2.0.5"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -143,7 +143,8 @@ detect_available_leds() {
 
 # 优化的HCTL硬盘映射检测
 detect_disk_mapping_hctl() {
-    echo -e "${CYAN}使用HCTL方式检测硬盘映射...${NC}"
+    echo -e "${CYAN}使用HCTL方式检测硬盘映射 v2.0.5...${NC}"
+    echo -e "${BLUE}当前可用硬盘LED: ${DISK_LEDS[*]}${NC}"
     
     # 获取所有存储设备的HCTL信息
     local hctl_info=$(lsblk -S -x hctl -o name,hctl,serial,model,size 2>/dev/null)
@@ -164,6 +165,16 @@ detect_disk_mapping_hctl() {
     declare -gA DISK_HCTL_MAP
     
     local successful_mappings=0
+    
+    # 使用更兼容的方式处理HCTL信息
+    local temp_hctl="/tmp/hctl_info_$$"
+    echo "$hctl_info" > "$temp_hctl"
+        fi
+    done
+    
+    # 使用更兼容的方式处理HCTL信息
+    local temp_hctl="/tmp/hctl_info_$$"
+    echo "$hctl_info" > "$temp_hctl"
     
     while IFS= read -r line; do
         # 跳过标题行和空行
@@ -228,7 +239,9 @@ detect_disk_mapping_hctl() {
                 ((successful_mappings++))
             fi
         fi
-    done < <(echo "$hctl_info")
+    done < "$temp_hctl"
+    
+    rm -f "$temp_hctl"
     
     echo -e "${BLUE}检测到 ${#DISKS[@]} 个硬盘，成功映射 $successful_mappings 个${NC}"
     
