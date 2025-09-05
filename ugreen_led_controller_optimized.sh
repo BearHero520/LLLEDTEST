@@ -6,6 +6,7 @@
 
 VERSION="2.0.0"
 
+# 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -13,6 +14,16 @@ CYAN='\033[0;36m'
 BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 NC='\033[0m'
+
+# 全局变量声明
+UGREEN_LEDS_CLI=""
+AVAILABLE_LEDS=()
+DISK_LEDS=()
+SYSTEM_LEDS=()
+DISKS=()
+declare -A DISK_LED_MAP
+declare -A DISK_INFO
+declare -A DISK_HCTL_MAP
 
 # 检查root权限
 [[ $EUID -ne 0 ]] && { echo -e "${RED}需要root权限: sudo LLLED${NC}"; exit 1; }
@@ -110,69 +121,143 @@ detect_available_leds() {
     echo
 }
 
-# 使用HCTL检测硬盘映射
+# 优化的HCTL硬盘映射检测
 detect_disk_mapping_hctl() {
     echo -e "${CYAN}使用HCTL方式检测硬盘映射...${NC}"
     
-    # 获取所有硬盘的HCTL信息
-    local hctl_info=$(lsblk -S -x hctl -o name,hctl,serial,model 2>/dev/null)
+    # 获取所有存储设备的HCTL信息
+    local hctl_info=$(lsblk -S -x hctl -o name,hctl,serial,model,size 2>/dev/null)
     
     if [[ -z "$hctl_info" ]]; then
-        echo -e "${RED}无法获取硬盘HCTL信息${NC}"
+        echo -e "${YELLOW}无法获取HCTL信息，可能系统不支持或无存储设备${NC}"
         return 1
     fi
     
-    echo -e "${YELLOW}硬盘HCTL信息:${NC}"
+    echo -e "${YELLOW}检测到的存储设备HCTL信息:${NC}"
     echo "$hctl_info"
     echo
     
-    # 解析HCTL信息并建立映射
+    # 解析HCTL信息并建立智能映射
     DISKS=()
     declare -gA DISK_LED_MAP
     declare -gA DISK_INFO
+    declare -gA DISK_HCTL_MAP
     
-    local disk_index=0
+    local successful_mappings=0
     
     while IFS= read -r line; do
-        # 跳过标题行
+        # 跳过标题行和空行
         [[ "$line" =~ ^NAME ]] && continue
-        [[ -z "$line" ]] && continue
+        [[ -z "$(echo "$line" | tr -d '[:space:]')" ]] && continue
         
         local name=$(echo "$line" | awk '{print $1}')
         local hctl=$(echo "$line" | awk '{print $2}')
         local serial=$(echo "$line" | awk '{print $3}')
-        local model=$(echo "$line" | awk '{$1=$2=$3=""; print $0}' | sed 's/^ *//')
+        local model=$(echo "$line" | awk '{print $4}')
+        local size=$(echo "$line" | awk '{print $5}')
         
-        # 只处理真实的硬盘设备
+        # 过滤有效的存储设备
         if [[ -b "/dev/$name" && "$name" =~ ^sd[a-z]+$ ]]; then
             DISKS+=("/dev/$name")
             
-            # 根据HCTL的第一个数字映射到LED (0->disk1, 1->disk2, ...)
-            local hctl_slot=$(echo "$hctl" | cut -d: -f1)
-            local led_number=$((hctl_slot + 1))
+            # 根据HCTL信息智能映射到LED
+            # HCTL格式: host:channel:target:lun
+            local hctl_host=$(echo "$hctl" | cut -d: -f1)
+            local hctl_channel=$(echo "$hctl" | cut -d: -f2)
+            local hctl_target=$(echo "$hctl" | cut -d: -f3)
             
-            # 检查对应的LED是否可用
-            if [[ " ${DISK_LEDS[*]} " =~ " disk${led_number} " ]]; then
-                DISK_LED_MAP["/dev/$name"]="disk${led_number}"
+            # 计算LED位置：优先使用target，然后是host
+            local led_number=$((hctl_target + 1))
+            
+            # 如果target映射超出范围，使用host映射
+            if [[ $led_number -gt ${#DISK_LEDS[@]} ]]; then
+                led_number=$((hctl_host + 1))
+            fi
+            
+            local target_led="disk${led_number}"
+            
+            # 检查目标LED是否可用且未被占用
+            if [[ " ${DISK_LEDS[*]} " =~ " $target_led " ]]; then
+                # 检查是否已被其他设备占用
+                local led_occupied=false
+                for existing_disk in "${!DISK_LED_MAP[@]}"; do
+                    if [[ "${DISK_LED_MAP[$existing_disk]}" == "$target_led" ]]; then
+                        led_occupied=true
+                        break
+                    fi
+                done
+                
+                if [[ "$led_occupied" == "false" ]]; then
+                    DISK_LED_MAP["/dev/$name"]="$target_led"
+                else
+                    # LED被占用，寻找下一个可用LED
+                    local found_led=""
+                    for led in "${DISK_LEDS[@]}"; do
+                        local is_used=false
+                        for existing_disk in "${!DISK_LED_MAP[@]}"; do
+                            if [[ "${DISK_LED_MAP[$existing_disk]}" == "$led" ]]; then
+                                is_used=true
+                                break
+                            fi
+                        done
+                        if [[ "$is_used" == "false" ]]; then
+                            found_led="$led"
+                            break
+                        fi
+                    done
+                    
+                    if [[ -n "$found_led" ]]; then
+                        DISK_LED_MAP["/dev/$name"]="$found_led"
+                    else
+                        DISK_LED_MAP["/dev/$name"]="none"
+                    fi
+                fi
             else
-                # 如果对应LED不可用，按顺序分配可用LED
-                if [[ $disk_index -lt ${#DISK_LEDS[@]} ]]; then
-                    DISK_LED_MAP["/dev/$name"]="${DISK_LEDS[$disk_index]}"
+                # 目标LED不存在，寻找可用LED
+                local found_led=""
+                for led in "${DISK_LEDS[@]}"; do
+                    local is_used=false
+                    for existing_disk in "${!DISK_LED_MAP[@]}"; do
+                        if [[ "${DISK_LED_MAP[$existing_disk]}" == "$led" ]]; then
+                            is_used=true
+                            break
+                        fi
+                    done
+                    if [[ "$is_used" == "false" ]]; then
+                        found_led="$led"
+                        break
+                    fi
+                done
+                
+                if [[ -n "$found_led" ]]; then
+                    DISK_LED_MAP["/dev/$name"]="$found_led"
                 else
                     DISK_LED_MAP["/dev/$name"]="none"
                 fi
             fi
             
-            DISK_INFO["/dev/$name"]="HCTL:$hctl Serial:${serial:-N/A} Model:${model:-N/A}"
+            # 保存设备信息
+            DISK_INFO["/dev/$name"]="HCTL:$hctl Serial:${serial:-N/A} Model:${model:-N/A} Size:${size:-N/A}"
+            DISK_HCTL_MAP["/dev/$name"]="$hctl"
             
-            echo -e "${GREEN}✓ /dev/$name -> ${DISK_LED_MAP["/dev/$name"]} (HCTL: $hctl)${NC}"
-            
-            ((disk_index++))
+            # 显示映射结果
+            local led_display="${DISK_LED_MAP["/dev/$name"]}"
+            if [[ "$led_display" == "none" ]]; then
+                echo -e "${YELLOW}⚠ /dev/$name -> 无可用LED (HCTL: $hctl)${NC}"
+            else
+                echo -e "${GREEN}✓ /dev/$name -> $led_display (HCTL: $hctl, Target: $hctl_target)${NC}"
+                ((successful_mappings++))
+            fi
         fi
     done < <(echo "$hctl_info")
     
-    echo -e "${BLUE}检测到 ${#DISKS[@]} 个硬盘，已分配 LED 映射${NC}"
-    echo
+    echo -e "${BLUE}检测到 ${#DISKS[@]} 个硬盘，成功映射 $successful_mappings 个${NC}"
+    
+    if [[ ${#DISKS[@]} -eq 0 ]]; then
+        return 1
+    fi
+    
+    return 0
 }
 
 # 备用硬盘检测方法
@@ -230,32 +315,86 @@ detect_disk_mapping_fallback() {
     echo
 }
 
-# 主检测函数
+# 优化的主检测函数 - 先检测LED再检测硬盘
 detect_system() {
-    echo -e "${CYAN}=== 系统检测 ===${NC}"
+    echo -e "${CYAN}=== 系统自动检测 ===${NC}"
+    echo "开始检测UGREEN LED控制系统..."
+    echo
     
-    # 1. 检测LED控制程序
+    # 第一步：检测LED控制程序
+    echo -e "${BLUE}[1/3] 检测LED控制程序...${NC}"
     if ! detect_led_controller; then
+        echo -e "${RED}LED控制程序检测失败，无法继续${NC}"
         exit 1
     fi
+    echo
     
-    # 2. 检测可用LED
+    # 第二步：检测可用LED灯
+    echo -e "${BLUE}[2/3] 检测可用LED灯...${NC}"
     detect_available_leds
     
+    if [[ ${#AVAILABLE_LEDS[@]} -eq 0 ]]; then
+        echo -e "${RED}未检测到任何可用LED，程序无法正常工作${NC}"
+        exit 1
+    fi
+    
     if [[ ${#DISK_LEDS[@]} -eq 0 ]]; then
-        echo -e "${RED}未检测到硬盘LED，程序无法正常工作${NC}"
-        exit 1
+        echo -e "${YELLOW}警告: 未检测到硬盘LED，硬盘状态功能将受限${NC}"
+        echo -e "${BLUE}仅检测到系统LED: ${SYSTEM_LEDS[*]}${NC}"
+        
+        # 询问是否继续
+        echo -e "${YELLOW}是否继续运行？ (y/N)${NC}"
+        read -r continue_choice
+        if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
+            echo -e "${YELLOW}退出程序${NC}"
+            exit 0
+        fi
     fi
+    echo
     
-    # 3. 检测硬盘映射 (优先使用HCTL方式)
-    if ! detect_disk_mapping_hctl; then
-        echo -e "${YELLOW}HCTL检测失败，使用备用方式...${NC}"
-        detect_disk_mapping_fallback
+    # 第三步：检测硬盘映射 (仅在有硬盘LED时执行)
+    if [[ ${#DISK_LEDS[@]} -gt 0 ]]; then
+        echo -e "${BLUE}[3/3] 检测硬盘设备和映射...${NC}"
+        
+        # 优先使用HCTL方式检测
+        if detect_disk_mapping_hctl; then
+            echo -e "${GREEN}✓ HCTL映射检测成功${NC}"
+        else
+            echo -e "${YELLOW}⚠ HCTL检测失败，尝试备用方式...${NC}"
+            detect_disk_mapping_fallback
+        fi
+        
+        if [[ ${#DISKS[@]} -eq 0 ]]; then
+            echo -e "${YELLOW}警告: 未检测到硬盘设备${NC}"
+            echo -e "${BLUE}LED控制功能仍可正常使用${NC}"
+        else
+            echo -e "${GREEN}✓ 检测到 ${#DISKS[@]} 个硬盘设备${NC}"
+        fi
+    else
+        echo -e "${BLUE}[3/3] 跳过硬盘检测 (无硬盘LED可用)${NC}"
+        DISKS=()
+        declare -gA DISK_LED_MAP
+        declare -gA DISK_INFO
+        declare -gA DISK_HCTL_MAP
     fi
+    echo
     
-    if [[ ${#DISKS[@]} -eq 0 ]]; then
-        echo -e "${RED}未检测到硬盘${NC}"
-        exit 1
+    # 检测结果摘要
+    echo -e "${GREEN}=== 检测结果摘要 ===${NC}"
+    echo -e "${CYAN}LED控制程序:${NC} $UGREEN_LEDS_CLI"
+    echo -e "${CYAN}可用LED总数:${NC} ${#AVAILABLE_LEDS[@]} (${AVAILABLE_LEDS[*]})"
+    echo -e "${CYAN}硬盘LED数量:${NC} ${#DISK_LEDS[@]} (${DISK_LEDS[*]})"
+    echo -e "${CYAN}系统LED数量:${NC} ${#SYSTEM_LEDS[@]} (${SYSTEM_LEDS[*]})"
+    echo -e "${CYAN}检测硬盘数量:${NC} ${#DISKS[@]}"
+    
+    if [[ ${#DISKS[@]} -gt 0 ]]; then
+        local mapped_count=0
+        for disk in "${DISKS[@]}"; do
+            if [[ "${DISK_LED_MAP[$disk]}" != "none" ]]; then
+                ((mapped_count++))
+            fi
+        done
+        echo -e "${CYAN}硬盘LED映射:${NC} ${mapped_count}/${#DISKS[@]}"
     fi
     
     echo -e "${GREEN}=== 系统检测完成 ===${NC}"
@@ -342,32 +481,91 @@ set_disk_led() {
     esac
 }
 
-# 智能硬盘状态显示
+# 优化的智能硬盘状态显示
 smart_disk_status() {
-    echo -e "${CYAN}智能硬盘状态显示${NC}"
-    echo "=========================="
+    echo -e "${CYAN}=== 智能硬盘状态显示 ===${NC}"
+    echo "时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "====================================="
+    
+    if [[ ${#DISKS[@]} -eq 0 ]]; then
+        echo -e "${RED}未检测到硬盘设备${NC}"
+        return 1
+    fi
+    
+    # 表头
+    printf "%-12s %-8s %-8s %-12s %s\n" "设备" "LED" "状态" "HCTL" "设备信息"
+    echo "---------------------------------------------------------------------"
+    
+    local active_count=0
+    local idle_count=0
+    local error_count=0
+    local offline_count=0
     
     for disk in "${DISKS[@]}"; do
         local status=$(get_disk_status "$disk")
         local led_name="${DISK_LED_MAP[$disk]}"
+        local hctl="${DISK_HCTL_MAP[$disk]:-N/A}"
         local info="${DISK_INFO[$disk]}"
         
+        # 设置LED状态
         set_disk_led "$disk" "$status"
         
-        # 状态颜色显示
-        local status_color
+        # 状态颜色和计数
+        local status_display
         case "$status" in
-            "active") status_color="${GREEN}活动${NC}" ;;
-            "idle") status_color="${YELLOW}空闲${NC}" ;;
-            "error") status_color="${RED}错误${NC}" ;;
-            "offline") status_color="${MAGENTA}离线${NC}" ;;
-            *) status_color="${RED}未知${NC}" ;;
+            "active") 
+                status_display="${GREEN}●活动${NC}"
+                ((active_count++))
+                ;;
+            "idle") 
+                status_display="${YELLOW}●空闲${NC}"
+                ((idle_count++))
+                ;;
+            "error") 
+                status_display="${RED}●错误${NC}"
+                ((error_count++))
+                ;;
+            "offline") 
+                status_display="${MAGENTA}●离线${NC}"
+                ((offline_count++))
+                ;;
+            *) 
+                status_display="${RED}●未知${NC}"
+                ;;
         esac
         
-        printf "%-12s -> %-6s [%s] %s\n" "$disk" "$led_name" "$status_color" "$info"
+        # LED显示
+        local led_display
+        if [[ "$led_name" == "none" ]]; then
+            led_display="${RED}无LED${NC}"
+        else
+            led_display="${CYAN}$led_name${NC}"
+        fi
+        
+        # 格式化输出
+        printf "%-12s %-16s %-16s %-12s\n" "$disk" "$led_display" "$status_display" "$hctl"
+        
+        # 设备详细信息（缩进显示）
+        echo "    $info"
+        echo
     done
     
-    echo -e "${GREEN}智能硬盘状态已更新${NC}"
+    # 统计信息
+    echo "====================================="
+    echo -e "${GREEN}状态统计:${NC}"
+    echo "  活动: $active_count | 空闲: $idle_count | 错误: $error_count | 离线: $offline_count"
+    echo "  总计: ${#DISKS[@]} 个硬盘，${#DISK_LEDS[@]} 个LED可用"
+    
+    # 健康状态概览
+    if [[ $error_count -gt 0 ]]; then
+        echo -e "${RED}⚠ 警告: 检测到 $error_count 个硬盘有错误状态${NC}"
+    elif [[ $offline_count -gt 0 ]]; then
+        echo -e "${YELLOW}⚠ 注意: 有 $offline_count 个硬盘离线${NC}"
+    else
+        echo -e "${GREEN}✓ 所有硬盘状态正常${NC}"
+    fi
+    
+    echo -e "${GREEN}智能硬盘状态已更新到LED显示${NC}"
 }
 
 # 实时硬盘活动监控
@@ -433,115 +631,292 @@ restore_system_leds() {
     fi
 }
 
-# 显示硬盘映射信息
+# 优化的硬盘映射显示
 show_disk_mapping() {
-    echo -e "${CYAN}硬盘LED映射信息${NC}"
-    echo "================================"
+    echo -e "${CYAN}=== 硬盘LED映射状态 ===${NC}"
+    echo "======================================"
+    
+    if [[ ${#DISKS[@]} -eq 0 ]]; then
+        echo -e "${RED}未检测到硬盘设备${NC}"
+        return 1
+    fi
+    
+    # 表头
+    printf "%-12s %-8s %-8s %-12s %-10s %s\n" "设备" "LED" "状态" "HCTL" "大小" "型号"
+    echo "--------------------------------------------------------------------------"
+    
+    local mapped_count=0
+    local unmapped_count=0
     
     for disk in "${DISKS[@]}"; do
         local led_name="${DISK_LED_MAP[$disk]}"
         local status=$(get_disk_status "$disk")
+        local hctl="${DISK_HCTL_MAP[$disk]:-N/A}"
         local info="${DISK_INFO[$disk]}"
         
-        # 状态颜色
-        local status_color
-        case "$status" in
-            "active") status_color="${GREEN}$status${NC}" ;;
-            "idle") status_color="${YELLOW}$status${NC}" ;;
-            "error") status_color="${RED}$status${NC}" ;;
-            "offline") status_color="${MAGENTA}$status${NC}" ;;
-            *) status_color="${RED}$status${NC}" ;;
-        esac
-        
-        if [[ "$led_name" == "none" ]]; then
-            printf "%-12s -> %-6s [%s]\n" "$disk" "不映射" "$status_color"
-        else
-            printf "%-12s -> %-6s [%s]\n" "$disk" "$led_name" "$status_color"
+        # 解析设备信息
+        local model=""
+        local size=""
+        if [[ "$info" =~ Model:([^[:space:]]+) ]]; then
+            model="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$info" =~ Size:([^[:space:]]+) ]]; then
+            size="${BASH_REMATCH[1]}"
         fi
         
-        echo "    $info"
-        echo
+        # 状态图标和颜色
+        local status_display
+        case "$status" in
+            "active") status_display="${GREEN}●活动${NC}" ;;
+            "idle") status_display="${YELLOW}●空闲${NC}" ;;
+            "error") status_display="${RED}●错误${NC}" ;;
+            "offline") status_display="${MAGENTA}●离线${NC}" ;;
+            *) status_display="${RED}●未知${NC}" ;;
+        esac
+        
+        # LED显示
+        local led_display
+        if [[ "$led_name" == "none" ]]; then
+            led_display="${RED}未映射${NC}"
+            ((unmapped_count++))
+        else
+            led_display="${CYAN}$led_name${NC}"
+            ((mapped_count++))
+        fi
+        
+        # 格式化输出
+        printf "%-12s %-16s %-16s %-12s %-10s %s\n" \
+            "$disk" "$led_display" "$status_display" "$hctl" "${size:-N/A}" "${model:-N/A}"
     done
+    
+    echo "--------------------------------------------------------------------------"
+    echo -e "${BLUE}映射统计: 已映射 $mapped_count 个，未映射 $unmapped_count 个，总计 ${#DISKS[@]} 个硬盘${NC}"
+    echo -e "${BLUE}可用LED: ${DISK_LEDS[*]} (共 ${#DISK_LEDS[@]} 个)${NC}"
+    
+    # 显示未使用的LED
+    local unused_leds=()
+    for led in "${DISK_LEDS[@]}"; do
+        local is_used=false
+        for disk in "${DISKS[@]}"; do
+            if [[ "${DISK_LED_MAP[$disk]}" == "$led" ]]; then
+                is_used=true
+                break
+            fi
+        done
+        if [[ "$is_used" == "false" ]]; then
+            unused_leds+=("$led")
+        fi
+    done
+    
+    if [[ ${#unused_leds[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}未使用LED: ${unused_leds[*]}${NC}"
+    else
+        echo -e "${GREEN}所有LED已分配使用${NC}"
+    fi
 }
 
-# 交互式配置硬盘映射
+# 优化的交互式硬盘映射配置
 interactive_config() {
-    echo -e "${CYAN}交互式硬盘映射配置${NC}"
-    echo "============================"
+    echo -e "${CYAN}=== 交互式硬盘映射配置 ===${NC}"
+    echo "======================================="
     
-    echo -e "${YELLOW}当前映射:${NC}"
+    if [[ ${#DISKS[@]} -eq 0 ]]; then
+        echo -e "${RED}未检测到硬盘设备${NC}"
+        return 1
+    fi
+    
+    echo -e "${YELLOW}当前硬盘映射状态:${NC}"
     show_disk_mapping
     
-    echo -e "${YELLOW}可用LED:${NC} ${DISK_LEDS[*]}"
+    echo -e "${BLUE}可用的LED位置: ${DISK_LEDS[*]}${NC}"
+    echo -e "${BLUE}检测到的硬盘数量: ${#DISKS[@]}${NC}"
     echo
     
+    echo -e "${YELLOW}配置选项:${NC}"
+    echo "1) 自动重新映射 (基于HCTL优化)"
+    echo "2) 手动配置每个硬盘"
+    echo "3) 恢复默认映射"
+    echo "4) 清除所有映射"
+    echo "0) 返回主菜单"
+    echo
+    
+    read -p "请选择配置方式 (1-4/0): " config_choice
+    
+    case $config_choice in
+        1)
+            # 自动重新映射
+            echo -e "${CYAN}执行自动HCTL优化映射...${NC}"
+            
+            # 清空当前映射
+            for disk in "${DISKS[@]}"; do
+                unset DISK_LED_MAP["$disk"]
+            done
+            
+            # 重新检测映射
+            if detect_disk_mapping_hctl; then
+                echo -e "${GREEN}✓ 自动映射完成${NC}"
+            else
+                echo -e "${YELLOW}HCTL映射失败，使用备用方式...${NC}"
+                detect_disk_mapping_fallback
+            fi
+            ;;
+            
+        2)
+            # 手动配置
+            echo -e "${CYAN}手动配置硬盘映射...${NC}"
+            manual_disk_mapping
+            ;;
+            
+        3)
+            # 恢复默认映射
+            echo -e "${CYAN}恢复默认映射 (按检测顺序)...${NC}"
+            local index=0
+            for disk in "${DISKS[@]}"; do
+                if [[ $index -lt ${#DISK_LEDS[@]} ]]; then
+                    DISK_LED_MAP["$disk"]="${DISK_LEDS[$index]}"
+                    echo -e "${GREEN}✓ $disk -> ${DISK_LEDS[$index]}${NC}"
+                else
+                    DISK_LED_MAP["$disk"]="none"
+                    echo -e "${YELLOW}✓ $disk -> 无LED (超出可用范围)${NC}"
+                fi
+                ((index++))
+            done
+            ;;
+            
+        4)
+            # 清除所有映射
+            echo -e "${YELLOW}确认清除所有硬盘LED映射？ (y/N)${NC}"
+            read -r confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                for disk in "${DISKS[@]}"; do
+                    DISK_LED_MAP["$disk"]="none"
+                    # 关闭对应LED
+                    set_disk_led "$disk" "off"
+                done
+                echo -e "${GREEN}✓ 所有映射已清除${NC}"
+            else
+                echo -e "${YELLOW}取消操作${NC}"
+            fi
+            ;;
+            
+        0)
+            echo -e "${YELLOW}返回主菜单${NC}"
+            return 0
+            ;;
+            
+        *)
+            echo -e "${RED}无效选择${NC}"
+            ;;
+    esac
+    
+    echo
+    echo -e "${YELLOW}配置完成后的映射状态:${NC}"
+    show_disk_mapping
+}
+
+# 手动硬盘映射配置
+manual_disk_mapping() {
     declare -A new_mapping
     declare -A used_leds
     
+    # 保留当前已使用的LED信息
     for disk in "${DISKS[@]}"; do
+        local current_led="${DISK_LED_MAP[$disk]}"
+        if [[ -n "$current_led" && "$current_led" != "none" ]]; then
+            used_leds["$current_led"]="$disk"
+        fi
+    done
+    
+    echo -e "${CYAN}开始手动配置...${NC}"
+    echo
+    
+    for disk in "${DISKS[@]}"; do
+        local hctl="${DISK_HCTL_MAP[$disk]:-N/A}"
         local info="${DISK_INFO[$disk]}"
+        local current_led="${DISK_LED_MAP[$disk]}"
         
         echo -e "${GREEN}配置硬盘: $disk${NC}"
-        echo "  $info"
+        echo "  HCTL: $hctl"
+        echo "  信息: $info"
+        echo "  当前映射: ${current_led:-未映射}"
+        echo
+        
+        # 显示可用LED选项
+        echo "可用LED选项:"
+        local led_index=1
+        local available_leds=()
+        
+        for led in "${DISK_LEDS[@]}"; do
+            local led_status=""
+            if [[ "${used_leds[$led]}" == "$disk" ]]; then
+                led_status=" (当前)"
+                available_leds+=("$led")
+            elif [[ -z "${used_leds[$led]}" ]]; then
+                led_status=" (可用)"
+                available_leds+=("$led")
+            else
+                led_status=" (被${used_leds[$led]}使用)"
+            fi
+            
+            if [[ -z "${used_leds[$led]}" || "${used_leds[$led]}" == "$disk" ]]; then
+                echo "  $led_index) $led$led_status"
+                ((led_index++))
+            fi
+        done
+        
+        echo "  n) 不映射LED"
+        echo "  s) 跳过 (保持当前设置)"
         echo
         
         while true; do
-            echo "可用LED位置:"
-            local led_index=1
-            for led in "${DISK_LEDS[@]}"; do
-                if [[ -z "${used_leds[$led]}" ]]; then
-                    echo "  $led_index) $led"
-                    ((led_index++))
-                fi
-            done
-            echo "  n) 不映射"
-            echo "  s) 跳过此硬盘"
-            echo
-            
-            read -p "请选择LED (数字/n/s): " choice
+            read -p "请选择 (数字/n/s): " choice
             
             if [[ "$choice" == "n" ]]; then
                 new_mapping["$disk"]="none"
-                echo -e "${YELLOW}已设置: $disk -> 不映射${NC}"
-                break
-            elif [[ "$choice" == "s" ]]; then
-                echo -e "${YELLOW}跳过: $disk${NC}"
-                break
-            elif [[ "$choice" =~ ^[0-9]+$ ]]; then
-                local selected_led=""
-                local current_index=1
-                for led in "${DISK_LEDS[@]}"; do
-                    if [[ -z "${used_leds[$led]}" ]]; then
-                        if [[ $current_index -eq $choice ]]; then
-                            selected_led="$led"
-                            break
-                        fi
-                        ((current_index++))
-                    fi
-                done
-                
-                if [[ -n "$selected_led" ]]; then
-                    new_mapping["$disk"]="$selected_led"
-                    used_leds["$selected_led"]="$disk"
-                    echo -e "${GREEN}已设置: $disk -> $selected_led${NC}"
-                    break
-                else
-                    echo -e "${RED}无效选择${NC}"
+                # 释放当前LED
+                if [[ -n "$current_led" && "$current_led" != "none" ]]; then
+                    unset used_leds["$current_led"]
                 fi
+                echo -e "${YELLOW}✓ 设置: $disk -> 不映射${NC}"
+                break
+                
+            elif [[ "$choice" == "s" ]]; then
+                echo -e "${YELLOW}✓ 跳过: $disk (保持当前设置)${NC}"
+                break
+                
+            elif [[ "$choice" =~ ^[0-9]+$ && $choice -ge 1 && $choice -le ${#available_leds[@]} ]]; then
+                local selected_led="${available_leds[$((choice-1))]}"
+                
+                # 释放当前LED
+                if [[ -n "$current_led" && "$current_led" != "none" ]]; then
+                    unset used_leds["$current_led"]
+                fi
+                
+                # 如果选择的LED被其他设备使用，先释放
+                if [[ -n "${used_leds[$selected_led]}" && "${used_leds[$selected_led]}" != "$disk" ]]; then
+                    unset used_leds["$selected_led"]
+                fi
+                
+                new_mapping["$disk"]="$selected_led"
+                used_leds["$selected_led"]="$disk"
+                echo -e "${GREEN}✓ 设置: $disk -> $selected_led${NC}"
+                break
+                
             else
-                echo -e "${RED}无效输入${NC}"
+                echo -e "${RED}无效选择，请重新输入${NC}"
             fi
         done
-        echo
+        echo "---"
     done
     
-    # 应用新映射
+    # 应用新的映射配置
     echo -e "${CYAN}应用新的映射配置...${NC}"
     for disk in "${!new_mapping[@]}"; do
         DISK_LED_MAP["$disk"]="${new_mapping[$disk]}"
+        echo -e "${GREEN}✓ 已应用: $disk -> ${new_mapping[$disk]}${NC}"
     done
     
-    echo -e "${GREEN}映射配置已更新${NC}"
+    echo -e "${GREEN}手动映射配置完成${NC}"
 }
 
 # 显示菜单
