@@ -116,8 +116,10 @@ files=(
     "scripts/led_test.sh"
     "scripts/configure_mapping.sh"
     "scripts/configure_mapping_optimized.sh"
+    "scripts/led_daemon.sh"
     "config/led_mapping.conf"
     "config/disk_mapping.conf"
+    "systemd/ugreen-led-monitor.service"
 )
 
 # 添加时间戳防止缓存
