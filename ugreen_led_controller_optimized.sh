@@ -112,7 +112,6 @@ detect_available_leds() {
             echo -e "${GREEN}✓ 检测到LED: $led_name${NC}"
         fi
     done <<< "$all_status"
-    done <<< "$all_status"
     
     if [[ ${#AVAILABLE_LEDS[@]} -eq 0 ]]; then
         echo -e "${RED}未检测到任何LED，请检查设备兼容性${NC}"
