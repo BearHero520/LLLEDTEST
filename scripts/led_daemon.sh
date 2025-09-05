@@ -29,6 +29,7 @@ DISK_LEDS=()
 declare -A DISK_LED_MAP
 declare -A DISK_INFO
 declare -A DISK_HCTL_MAP
+declare -A ACTIVITY_CACHE
 
 # 日志函数
 log_message() {
@@ -299,15 +300,36 @@ check_disk_activity() {
     
     # 读取磁盘统计信息 (读写扇区数)
     if [[ -f "/proc/diskstats" ]]; then
-        local stats_before=$(grep " $device " /proc/diskstats | awk '{print $6+$10}')
-        sleep 2
-        local stats_after=$(grep " $device " /proc/diskstats | awk '{print $6+$10}')
+        # 使用全局缓存来避免重复sleep
+        local current_time=$(date +%s)
+        local cache_key="activity_${device}"
         
-        if [[ "$stats_after" -gt "$stats_before" ]]; then
-            echo "ACTIVE"
-        else
-            echo "IDLE"
+        # 如果有缓存且时间差小于5秒，直接使用缓存
+        if [[ -n "${ACTIVITY_CACHE[$cache_key]}" ]]; then
+            local cached_time="${ACTIVITY_CACHE[${cache_key}_time]}"
+            if [[ $((current_time - cached_time)) -lt 5 ]]; then
+                echo "${ACTIVITY_CACHE[$cache_key]}"
+                return
+            fi
         fi
+        
+        # 读取当前和之前的统计信息
+        local stats_current=$(grep " $device " /proc/diskstats | awk '{print $6+$10}')
+        local stats_previous="${ACTIVITY_CACHE[${cache_key}_stats]}"
+        
+        local activity_status
+        if [[ -n "$stats_previous" && "$stats_current" -gt "$stats_previous" ]]; then
+            activity_status="ACTIVE"
+        else
+            activity_status="IDLE"
+        fi
+        
+        # 更新缓存
+        ACTIVITY_CACHE[$cache_key]="$activity_status"
+        ACTIVITY_CACHE["${cache_key}_time"]="$current_time"
+        ACTIVITY_CACHE["${cache_key}_stats"]="$stats_current"
+        
+        echo "$activity_status"
     else
         echo "UNKNOWN"
     fi
@@ -433,6 +455,37 @@ set_disk_led_by_activity() {
     esac
 }
 
+# 关闭未使用的LED
+turn_off_unused_leds() {
+    log_message "关闭未使用的LED..."
+    
+    # 获取所有已映射的LED
+    local used_leds=()
+    for disk in "${DISKS[@]}"; do
+        local led_name="${DISK_LED_MAP[$disk]}"
+        if [[ -n "$led_name" && "$led_name" != "none" ]]; then
+            used_leds+=("$led_name")
+        fi
+    done
+    
+    # 关闭未使用的硬盘LED
+    for led in "${DISK_LEDS[@]}"; do
+        local is_used=false
+        for used_led in "${used_leds[@]}"; do
+            if [[ "$led" == "$used_led" ]]; then
+                is_used=true
+                break
+            fi
+        done
+        
+        if [[ "$is_used" == "false" ]]; then
+            log_message "关闭未使用的LED: $led"
+            "$UGREEN_CLI" "$led" -off >/dev/null 2>&1
+            "$UGREEN_CLI" "$led" -color 0 0 0 -off -brightness 0 >/dev/null 2>&1
+        fi
+    done
+}
+
 # 后台监控函数
 background_monitor() {
     local scan_interval=${1:-30}
@@ -440,8 +493,10 @@ background_monitor() {
     log_message "启动UGREEN LED监控服务 (基于smart_disk_activity.sh机制)"
     log_message "扫描间隔设置为: ${scan_interval}秒"
     
-    # 记录PID
-    echo $$ > "$PID_FILE"
+    # 如果不是从_background模式调用，记录PID
+    if [[ "$1" != "_from_systemd" ]]; then
+        echo $$ > "$PID_FILE"
+    fi
     
     # 检测LED控制程序
     if [[ ! -x "$UGREEN_CLI" ]]; then
@@ -499,6 +554,12 @@ background_monitor() {
         for disk in "${DISKS[@]}"; do
             set_disk_led_by_activity "$disk"
         done
+        
+        # 关闭未使用的LED（每10个周期执行一次）
+        if (( scan_counter % 10 == 0 )); then
+            turn_off_unused_leds
+        fi
+        
         log_message "LED状态更新完成 - 等待 ${scan_interval}秒"
         
         ((scan_counter++))
@@ -637,8 +698,15 @@ case "$1" in
         fi
         ;;
     _background)
-        # 内部使用，启动后台监控
-        background_monitor "$2"
+        # systemd使用，直接运行后台监控
+        local scan_interval=${2:-30}
+        log_message "从systemd启动后台监控服务 (扫描间隔: ${scan_interval}秒)"
+        
+        # 记录PID
+        echo $$ > "$PID_FILE"
+        
+        # 直接运行监控循环（不fork）
+        background_monitor "$scan_interval"
         ;;
     *)
         echo "用法: $0 {start|stop|restart|status|logs} [扫描间隔秒数]"
