@@ -1299,9 +1299,6 @@ background_service_management() {
             local pid=$!
             echo "$pid" > "/var/run/ugreen-led-monitor.pid"
             echo -e "${GREEN}✓ 服务已重启 (PID: $pid)${NC}"
-            else
-                echo -e "${RED}后台服务脚本不存在${NC}"
-            fi
             ;;
             
         4)
