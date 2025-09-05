@@ -116,13 +116,21 @@ check_network_status() {
     # 检查网络连通性
     if ping -c 1 -W "$timeout" "$network_test_host" >/dev/null 2>&1; then
         # 检查网络活动（简单的流量检测）
-        local rx_bytes1=$(cat /sys/class/net/*/statistics/rx_bytes 2>/dev/null | awk '{sum+=$1} END {print sum}')
-        local tx_bytes1=$(cat /sys/class/net/*/statistics/tx_bytes 2>/dev/null | awk '{sum+=$1} END {print sum}')
+        local rx_bytes1=$(cat /sys/class/net/*/statistics/rx_bytes 2>/dev/null | awk '{sum+=$1} END {printf "%.0f", sum}')
+        local tx_bytes1=$(cat /sys/class/net/*/statistics/tx_bytes 2>/dev/null | awk '{sum+=$1} END {printf "%.0f", sum}')
+        
+        # 确保变量是有效数字
+        [[ -z "$rx_bytes1" || ! "$rx_bytes1" =~ ^[0-9]+$ ]] && rx_bytes1=0
+        [[ -z "$tx_bytes1" || ! "$tx_bytes1" =~ ^[0-9]+$ ]] && tx_bytes1=0
         
         sleep 1
         
-        local rx_bytes2=$(cat /sys/class/net/*/statistics/rx_bytes 2>/dev/null | awk '{sum+=$1} END {print sum}')
-        local tx_bytes2=$(cat /sys/class/net/*/statistics/tx_bytes 2>/dev/null | awk '{sum+=$1} END {print sum}')
+        local rx_bytes2=$(cat /sys/class/net/*/statistics/rx_bytes 2>/dev/null | awk '{sum+=$1} END {printf "%.0f", sum}')
+        local tx_bytes2=$(cat /sys/class/net/*/statistics/tx_bytes 2>/dev/null | awk '{sum+=$1} END {printf "%.0f", sum}')
+        
+        # 确保变量是有效数字
+        [[ -z "$rx_bytes2" || ! "$rx_bytes2" =~ ^[0-9]+$ ]] && rx_bytes2=0
+        [[ -z "$tx_bytes2" || ! "$tx_bytes2" =~ ^[0-9]+$ ]] && tx_bytes2=0
         
         local rx_diff=$((rx_bytes2 - rx_bytes1))
         local tx_diff=$((tx_bytes2 - tx_bytes1))
@@ -167,10 +175,18 @@ check_disk_status() {
         local read1=$(awk '{print $1}' "$disk_stats")
         local write1=$(awk '{print $5}' "$disk_stats")
         
+        # 确保变量是有效数字
+        [[ -z "$read1" || ! "$read1" =~ ^[0-9]+$ ]] && read1=0
+        [[ -z "$write1" || ! "$write1" =~ ^[0-9]+$ ]] && write1=0
+        
         sleep 1
         
         local read2=$(awk '{print $1}' "$disk_stats")
         local write2=$(awk '{print $5}' "$disk_stats")
+        
+        # 确保变量是有效数字
+        [[ -z "$read2" || ! "$read2" =~ ^[0-9]+$ ]] && read2=0
+        [[ -z "$write2" || ! "$write2" =~ ^[0-9]+$ ]] && write2=0
         
         local read_diff=$((read2 - read1))
         local write_diff=$((write2 - write1))
@@ -189,7 +205,9 @@ check_disk_status() {
 update_power_status() {
     # 检查系统负载来决定电源状态
     local load_avg=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | sed 's/,//')
-    local load_level=$(echo "$load_avg > 2.0" | bc -l 2>/dev/null || echo 0)
+    
+    # 使用awk替代bc进行浮点数比较
+    local load_level=$(echo "$load_avg" | awk '{if($1 > 2.0) print 1; else print 0}')
     
     if [[ "$load_level" == "1" ]]; then
         # 高负载 - 使用正常状态

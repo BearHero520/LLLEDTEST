@@ -110,6 +110,7 @@ files=(
     "verify_detection.sh"
     "ugreen_leds_cli"
     "llled-quick.sh"
+    "test_monitor_fix.sh"
     "scripts/disk_status_leds.sh"
     "scripts/turn_off_all_leds.sh"
     "scripts/rainbow_effect.sh"
