@@ -109,7 +109,6 @@ files=(
     "uninstall.sh"
     "verify_detection.sh"
     "ugreen_leds_cli"
-    "llled-quick.sh"
     "test_monitor_fix.sh"
     "scripts/disk_status_leds.sh"
     "scripts/turn_off_all_leds.sh"
@@ -174,21 +173,16 @@ else
     echo -e "${RED}错误: 主控制脚本未找到${NC}"
 fi
 
-# 创建快捷命令
-if [[ -f "$INSTALL_DIR/llled-quick.sh" ]]; then
-    ln -sf "$INSTALL_DIR/llled-quick.sh" /usr/local/bin/llled-menu
-    echo -e "${GREEN}✓ LLLED快捷菜单命令创建成功${NC}"
-fi
+# 快捷命令已移除 - 仅保留传统LLLED入口
 
 echo -e "${GREEN}✓ 安装完成！${NC}"
 
-# 显示主入口信息 (精简版)
+# 显示完成信息 (仅传统LLLED入口)
 echo ""
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║  🎉 LLLED v2.1.0 安装完成！           ║${NC}"
 echo -e "${CYAN}║                                        ║${NC}"
-echo -e "${CYAN}║  主入口: sudo llled-menu               ║${NC}"
-echo -e "${CYAN}║  传统版: sudo LLLED                   ║${NC}"
+echo -e "${CYAN}║  使用命令: sudo LLLED                 ║${NC}"
 echo -e "${CYAN}║                                        ║${NC}"
 echo -e "${CYAN}║  🎨 新增颜色自定义功能                ║${NC}"
 echo -e "${CYAN}║  🤖 智能状态监控                      ║${NC}"
@@ -208,8 +202,7 @@ echo
 echo -e "${CYAN}================================${NC}"
 echo -e "${CYAN}📖 使用说明${NC}"
 echo -e "${CYAN}================================${NC}"
-echo -e "${GREEN}主入口: sudo llled-menu${NC}      # 🎨 完整功能菜单"
-echo -e "${GREEN}传统版: sudo LLLED${NC}           # 🔧 经典控制界面"
+echo -e "${GREEN}使用命令: sudo LLLED${NC}        # 🎨 LED控制面板 (含颜色配置)"
 echo ""
 echo -e "${YELLOW}项目地址: https://github.com/${GITHUB_REPO}${NC}"
 echo ""

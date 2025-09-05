@@ -67,6 +67,27 @@ STATUS_BRIGHTNESS["空闲状态"]="32"
 STATUS_BRIGHTNESS["错误状态"]="255"
 STATUS_BRIGHTNESS["离线状态"]="16"
 
+# 安全的配置更新函数
+update_config_value() {
+    local key="$1"
+    local value="$2"
+    
+    # 确保配置文件存在
+    [[ ! -f "$COLOR_CONFIG" ]] && init_color_config
+    
+    # 转义特殊字符
+    local escaped_value=$(printf '%s\n' "$value" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    
+    # 检查键是否存在
+    if grep -q "^${key}=" "$COLOR_CONFIG"; then
+        # 更新现有配置，使用#作为分隔符避免冲突
+        sed -i "s#^${key}=.*#${key}=\"${value}\"#" "$COLOR_CONFIG"
+    else
+        # 添加新配置
+        echo "${key}=\"${value}\"" >> "$COLOR_CONFIG"
+    fi
+}
+
 # 初始化颜色配置文件
 init_color_config() {
     if [[ ! -f "$COLOR_CONFIG" ]]; then
@@ -189,10 +210,10 @@ configure_power_colors() {
     local power_error
     power_error=$(select_color "选择电源键错误状态颜色:")
     
-    # 保存配置
-    sed -i "s/^POWER_NORMAL=.*/POWER_NORMAL=\"$power_normal\"/" "$COLOR_CONFIG"
-    sed -i "s/^POWER_STANDBY=.*/POWER_STANDBY=\"$power_standby\"/" "$COLOR_CONFIG"
-    sed -i "s/^POWER_ERROR=.*/POWER_ERROR=\"$power_error\"/" "$COLOR_CONFIG"
+    # 保存配置到文件
+    update_config_value "POWER_NORMAL" "$power_normal"
+    update_config_value "POWER_STANDBY" "$power_standby"
+    update_config_value "POWER_ERROR" "$power_error"
     
     echo -e "${GREEN}✓ 电源键颜色配置已保存${NC}"
 }
@@ -223,11 +244,11 @@ configure_network_colors() {
     local network_offline
     network_offline=$(select_color "选择网络离线状态颜色:")
     
-    # 保存配置
-    sed -i "s/^NETWORK_ACTIVE=.*/NETWORK_ACTIVE=\"$network_active\"/" "$COLOR_CONFIG"
-    sed -i "s/^NETWORK_IDLE=.*/NETWORK_IDLE=\"$network_idle\"/" "$COLOR_CONFIG"
-    sed -i "s/^NETWORK_ERROR=.*/NETWORK_ERROR=\"$network_error\"/" "$COLOR_CONFIG"
-    sed -i "s/^NETWORK_OFFLINE=.*/NETWORK_OFFLINE=\"$network_offline\"/" "$COLOR_CONFIG"
+    # 保存配置到文件
+    update_config_value "NETWORK_ACTIVE" "$network_active"
+    update_config_value "NETWORK_IDLE" "$network_idle" 
+    update_config_value "NETWORK_ERROR" "$network_error"
+    update_config_value "NETWORK_OFFLINE" "$network_offline"
     
     echo -e "${GREEN}✓ 网络LED颜色配置已保存${NC}"
 }
@@ -259,11 +280,11 @@ configure_disk_colors() {
     local disk_offline
     disk_offline=$(select_color "选择硬盘离线状态颜色:")
     
-    # 保存配置
-    sed -i "s/^DISK_ACTIVE=.*/DISK_ACTIVE=\"$disk_active\"/" "$COLOR_CONFIG"
-    sed -i "s/^DISK_IDLE=.*/DISK_IDLE=\"$disk_idle\"/" "$COLOR_CONFIG"
-    sed -i "s/^DISK_ERROR=.*/DISK_ERROR=\"$disk_error\"/" "$COLOR_CONFIG"
-    sed -i "s/^DISK_OFFLINE=.*/DISK_OFFLINE=\"$disk_offline\"/" "$COLOR_CONFIG"
+    # 保存配置到文件
+    update_config_value "DISK_ACTIVE" "$disk_active"
+    update_config_value "DISK_IDLE" "$disk_idle"
+    update_config_value "DISK_ERROR" "$disk_error"
+    update_config_value "DISK_OFFLINE" "$disk_offline"
     
     echo -e "${GREEN}✓ 硬盘LED颜色配置已保存${NC}"
 }

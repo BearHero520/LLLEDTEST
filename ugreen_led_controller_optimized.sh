@@ -640,58 +640,13 @@ launch_color_config() {
     
     if [[ -f "$color_script" ]]; then
         echo -e "${GREEN}启动颜色配置界面...${NC}"
+        # 确保脚本有执行权限
+        chmod +x "$color_script"
         bash "$color_script"
     else
-        echo -e "${YELLOW}颜色配置脚本不存在，正在创建基础版本...${NC}"
-        
-        # 确保目录存在
-        mkdir -p "$SCRIPT_DIR/scripts"
-        
-        # 创建基本的颜色配置脚本
-        cat > "$color_script" << 'COLOREOF'
-#!/bin/bash
-
-# 颜色配置菜单
-show_color_menu() {
-    clear
-    echo -e "\033[36m=== LED颜色配置 ===\033[0m"
-    echo "=========================="
-    echo "1) 硬盘状态颜色设置"
-    echo "2) 系统LED颜色设置"  
-    echo "3) 智能监控颜色配置"
-    echo "4) 预设颜色方案"
-    echo "5) 自定义RGB颜色"
-    echo "0) 返回主菜单"
-    echo "=========================="
-    echo -n "请选择: "
-}
-
-# 颜色配置主循环
-main() {
-    while true; do
-        show_color_menu
-        read -r choice
-        case $choice in
-            1) echo -e "\033[33m硬盘状态颜色设置功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
-            2) echo -e "\033[33m系统LED颜色设置功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
-            3) echo -e "\033[33m智能监控颜色配置功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
-            4) echo -e "\033[33m预设颜色方案功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
-            5) echo -e "\033[33m自定义RGB颜色功能需要完整版本支持\033[0m" ; read -p "按回车继续..." ;;
-            0) break ;;
-            *) echo -e "\033[31m无效选项\033[0m" ; read -p "按回车继续..." ;;
-        esac
-    done
-}
-
-main "$@"
-COLOREOF
-        
-        chmod +x "$color_script"
-        echo -e "${GREEN}✓ 基础颜色配置脚本已创建${NC}"
-        echo -e "${YELLOW}提示: 使用完整安装包可获得全功能颜色配置${NC}"
-        
-        # 启动基础版本
-        bash "$color_script"
+        echo -e "${YELLOW}颜色配置脚本不存在，请重新安装LLLED系统${NC}"
+        echo -e "${CYAN}安装命令: wget -O install.sh https://github.com/BearHero520/LLLEDTEST/raw/main/quick_install.sh && sudo bash install.sh${NC}"
+        read -p "按回车继续..."
     fi
 }
 
@@ -1126,14 +1081,36 @@ case "${1:-menu}" in
                     ;;
                 5) 
                     echo -e "${CYAN}启动彩虹效果 (按Ctrl+C停止)...${NC}"
-                    trap 'echo -e "\n${YELLOW}停止彩虹效果${NC}"; break' INT
-                    while true; do
-                        for color in "255 0 0" "0 255 0" "0 0 255" "255 255 0" "255 0 255" "0 255 255" "255 128 0" "128 0 255"; do
-                            $UGREEN_LEDS_CLI all -color $color -on -brightness 128
-                            sleep 0.8
+                    sleep 1
+                    
+                    # 彩虹效果函数
+                    run_rainbow_effect() {
+                        local rainbow_running=true
+                        
+                        # 设置信号捕获
+                        trap 'rainbow_running=false; echo -e "\n${YELLOW}正在停止彩虹效果...${NC}"' INT
+                        
+                        while $rainbow_running; do
+                            for color in "255 0 0" "0 255 0" "0 0 255" "255 255 0" "255 0 255" "0 255 255" "255 128 0" "128 0 255"; do
+                                if ! $rainbow_running; then
+                                    break
+                                fi
+                                $UGREEN_LEDS_CLI all -color $color -on -brightness 128 >/dev/null 2>&1
+                                sleep 0.8
+                            done
                         done
-                    done
-                    trap - INT
+                        
+                        # 恢复默认状态
+                        $UGREEN_LEDS_CLI all -off >/dev/null 2>&1
+                        echo -e "${GREEN}彩虹效果已停止${NC}"
+                        
+                        # 重置信号捕获
+                        trap - INT
+                    }
+                    
+                    # 运行彩虹效果
+                    run_rainbow_effect
+                    read -p "按回车继续..."
                     ;;
                 6) 
                     echo -e "${CYAN}设置节能模式...${NC}"
