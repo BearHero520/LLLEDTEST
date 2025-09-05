@@ -58,19 +58,19 @@ while IFS= read -r line; do
     hctl=$(echo "$line" | awk '{print $2}')
     
     if [[ "$name" =~ ^sd[a-z]+$ && -b "/dev/$name" ]]; then
-        hctl_target=$(echo "$hctl" | cut -d: -f3)
+        hctl_host=$(echo "$hctl" | cut -d: -f1)
         
-        # 直接映射：target值直接对应槽位号
-        case "$hctl_target" in
+        # 直接映射：host值直接对应槽位号
+        case "$hctl_host" in
             "0") target_led="disk1" ;;
             "1") target_led="disk2" ;;
             "2") target_led="disk3" ;;
             "3") target_led="disk4" ;;
-            *) target_led="disk$((hctl_target + 1))" ;;
+            *) target_led="disk$((hctl_host + 1))" ;;
         esac
         
         correct_mapping["/dev/$name"]="$target_led"
-        echo "/dev/$name (HCTL: $hctl, target: $hctl_target) -> $target_led"
+        echo "/dev/$name (HCTL: $hctl, host: $hctl_host) -> $target_led"
     fi
 done <<< "$hctl_info"
 

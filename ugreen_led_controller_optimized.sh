@@ -2,7 +2,9 @@
 
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
-# 版本: 2.0.7 (优化版 - 修复备用方法覆盖HCTL映射)
+#!/bin/bash
+# UGREEN LED控制器优化版 v2.0.8
+# 修复HCTL映射使用Host而非Target字段
 
 VERSION="2.0.7"
 
@@ -144,7 +146,7 @@ detect_available_leds() {
 # 优化的HCTL硬盘映射检测
 # 新的HCTL硬盘映射检测函数 - 完全重写避免语法错误
 detect_disk_mapping_hctl() {
-    echo -e "${CYAN}使用HCTL方式检测硬盘映射 v2.0.7...${NC}"
+    echo -e "${CYAN}使用HCTL方式检测硬盘映射 v2.0.8...${NC}"
     echo -e "${BLUE}当前可用硬盘LED: ${DISK_LEDS[*]}${NC}"
     
     # 获取所有存储设备的HCTL信息
@@ -192,20 +194,20 @@ detect_disk_mapping_hctl() {
             
             echo -e "${CYAN}处理设备: /dev/$name (HCTL: $hctl)${NC}"
             
-            # 提取HCTL target值并映射到LED槽位
-            local hctl_target=$(echo "$hctl" | cut -d: -f3)
+            # 提取HCTL host值并映射到LED槽位（host通常对应物理槽位）
+            local hctl_host=$(echo "$hctl" | cut -d: -f1)
             local led_number
             
-            case "$hctl_target" in
-                "0") led_number=1 ;;  # target 0 -> 槽位1 (disk1)
-                "1") led_number=2 ;;  # target 1 -> 槽位2 (disk2) 
-                "2") led_number=3 ;;  # target 2 -> 槽位3 (disk3)
-                "3") led_number=4 ;;  # target 3 -> 槽位4 (disk4)
-                "4") led_number=5 ;;  # target 4 -> 槽位5 (disk5)
-                "5") led_number=6 ;;  # target 5 -> 槽位6 (disk6)
-                "6") led_number=7 ;;  # target 6 -> 槽位7 (disk7)
-                "7") led_number=8 ;;  # target 7 -> 槽位8 (disk8)
-                *) led_number=$((hctl_target + 1)) ;;
+            case "$hctl_host" in
+                "0") led_number=1 ;;  # host 0 -> 槽位1 (disk1)
+                "1") led_number=2 ;;  # host 1 -> 槽位2 (disk2) 
+                "2") led_number=3 ;;  # host 2 -> 槽位3 (disk3)
+                "3") led_number=4 ;;  # host 3 -> 槽位4 (disk4)
+                "4") led_number=5 ;;  # host 4 -> 槽位5 (disk5)
+                "5") led_number=6 ;;  # host 5 -> 槽位6 (disk6)
+                "6") led_number=7 ;;  # host 6 -> 槽位7 (disk7)
+                "7") led_number=8 ;;  # host 7 -> 槽位8 (disk8)
+                *) led_number=$((hctl_host + 1)) ;;
             esac
             
             local target_led="disk${led_number}"
@@ -221,11 +223,11 @@ detect_disk_mapping_hctl() {
             
             if [[ "$led_available" == "true" ]]; then
                 DISK_LED_MAP["/dev/$name"]="$target_led"
-                echo -e "${GREEN}✓ 映射: /dev/$name -> $target_led (HCTL target: $hctl_target)${NC}"
+                echo -e "${GREEN}✓ 映射: /dev/$name -> $target_led (HCTL host: $hctl_host)${NC}"
                 ((successful_mappings++))
             else
                 DISK_LED_MAP["/dev/$name"]="none"
-                echo -e "${RED}✗ LED不可用: $target_led (HCTL target: $hctl_target)${NC}"
+                echo -e "${RED}✗ LED不可用: $target_led (HCTL host: $hctl_host)${NC}"
             fi
             
             # 保存设备信息
