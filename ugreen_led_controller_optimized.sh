@@ -1243,25 +1243,125 @@ background_service_management() {
             local source_service="$SCRIPT_DIR/systemd/ugreen-led-monitor.service"
             local daemon_script="$SCRIPT_DIR/scripts/led_daemon.sh"
             
-            # 检查必要文件
-            local missing_files=()
-            [[ ! -f "$source_service" ]] && missing_files+=("systemd/ugreen-led-monitor.service")
-            [[ ! -f "$daemon_script" ]] && missing_files+=("scripts/led_daemon.sh")
+            # 确保目录存在
+            mkdir -p "$SCRIPT_DIR/systemd" "$SCRIPT_DIR/scripts"
             
-            # 下载缺失文件
-            if [[ ${#missing_files[@]} -gt 0 ]]; then
-                echo -e "${YELLOW}下载缺失文件...${NC}"
-                mkdir -p "$SCRIPT_DIR/systemd" "$SCRIPT_DIR/scripts"
-                
-                for file in "${missing_files[@]}"; do
-                    if wget -q -O "$SCRIPT_DIR/$file" "https://raw.githubusercontent.com/BearHero520/LLLED/main/$file"; then
-                        echo -e "${GREEN}✓ $file${NC}"
-                    else
-                        echo -e "${RED}✗ 下载失败，请检查网络连接${NC}"
-                        return 1
-                    fi
-                done
-                chmod +x "$SCRIPT_DIR/scripts/"*.sh 2>/dev/null
+            # 创建systemd服务文件（如果不存在）
+            if [[ ! -f "$source_service" ]]; then
+                echo -e "${YELLOW}创建systemd服务文件...${NC}"
+                cat > "$source_service" << 'EOF'
+[Unit]
+Description=UGREEN LED Auto Monitor Service - 硬盘状态和插拔监控
+Documentation=https://github.com/BearHero520/LLLED
+After=network.target local-fs.target
+
+[Service]
+Type=forking
+User=root
+WorkingDirectory=/opt/ugreen-led-controller
+ExecStart=/opt/ugreen-led-controller/scripts/led_daemon.sh start 30
+ExecStop=/opt/ugreen-led-controller/scripts/led_daemon.sh stop
+ExecReload=/opt/ugreen-led-controller/scripts/led_daemon.sh restart
+PIDFile=/var/run/ugreen-led-monitor.pid
+Restart=always
+RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# 环境变量
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 安全设置
+NoNewPrivileges=false
+PrivateTmp=false
+
+# 日志设置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ugreen-led-monitor
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                echo -e "${GREEN}✓ systemd服务文件已创建${NC}"
+            fi
+            
+            # 创建守护脚本（如果不存在）
+            if [[ ! -f "$daemon_script" ]]; then
+                echo -e "${YELLOW}创建守护脚本...${NC}"
+                cat > "$daemon_script" << 'EOF'
+#!/bin/bash
+
+# UGREEN LED 后台监控服务
+# 自动监控硬盘状态变化和插拔事件
+
+SERVICE_NAME="ugreen-led-monitor"
+LOG_FILE="/var/log/${SERVICE_NAME}.log"
+PID_FILE="/var/run/${SERVICE_NAME}.pid"
+SCRIPT_DIR="/opt/ugreen-led-controller"
+
+# 日志函数
+log_message() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# 启动服务
+start_service() {
+    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "服务已在运行"
+        return 1
+    fi
+    
+    log_message "启动UGREEN LED监控服务..."
+    
+    # 后台运行监控
+    (
+        while true; do
+            # 调用主脚本的监控函数
+            if [[ -f "$SCRIPT_DIR/ugreen_led_controller_optimized.sh" ]]; then
+                source "$SCRIPT_DIR/ugreen_led_controller_optimized.sh"
+                background_monitor
+            fi
+            sleep 30
+        done
+    ) &
+    
+    echo $! > "$PID_FILE"
+    log_message "服务已启动，PID: $(cat "$PID_FILE")"
+}
+
+# 停止服务
+stop_service() {
+    if [[ -f "$PID_FILE" ]]; then
+        local pid=$(cat "$PID_FILE")
+        if kill "$pid" 2>/dev/null; then
+            log_message "服务已停止"
+        fi
+        rm -f "$PID_FILE"
+    fi
+}
+
+# 主函数
+case "$1" in
+    start)
+        start_service
+        ;;
+    stop)
+        stop_service
+        ;;
+    restart)
+        stop_service
+        sleep 2
+        start_service
+        ;;
+    *)
+        echo "用法: $0 {start|stop|restart} [scan_interval]"
+        exit 1
+        ;;
+esac
+EOF
+                chmod +x "$daemon_script"
+                echo -e "${GREEN}✓ 守护脚本已创建${NC}"
             fi
             
             # 安装服务
