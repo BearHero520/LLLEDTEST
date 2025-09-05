@@ -1238,23 +1238,29 @@ background_service_management() {
             
         6)
             echo -e "${CYAN}安装systemd服务 (开机自启)...${NC}"
-            local service_file="/etc/systemd/system/ugreen-led-monitor.service"
-            local source_service="/opt/ugreen-led-controller/systemd/ugreen-led-monitor.service"
             
-            if [[ -f "$source_service" ]]; then
-                cp "$source_service" "$service_file"
-                systemctl daemon-reload
-                systemctl enable ugreen-led-monitor.service
-                echo -e "${GREEN}✓ Systemd服务已安装并启用${NC}"
-                echo "服务将在下次重启时自动启动"
+            # 检查并自动下载自动安装脚本
+            local auto_installer="/tmp/auto_service_install.sh"
+            echo -e "${YELLOW}正在下载自动安装脚本...${NC}"
+            
+            if wget -q -O "$auto_installer" "https://raw.githubusercontent.com/BearHero520/LLLED/main/auto_service_install.sh"; then
+                chmod +x "$auto_installer"
+                echo -e "${GREEN}✓ 下载完成，开始自动安装...${NC}"
                 echo
-                read -p "是否现在启动服务？ (y/N): " start_now
-                if [[ "$start_now" =~ ^[Yy]$ ]]; then
-                    systemctl start ugreen-led-monitor.service
-                    echo -e "${GREEN}✓ 服务已启动${NC}"
+                
+                # 运行自动安装脚本
+                if "$auto_installer"; then
+                    echo -e "${GREEN}✓ 后台服务安装完成！${NC}"
+                    echo -e "${CYAN}服务已设置为开机自启动，现在支持SSH断开后自动监控硬盘状态！${NC}"
+                else
+                    echo -e "${RED}✗ 自动安装失败${NC}"
                 fi
+                
+                # 清理临时文件
+                rm -f "$auto_installer"
             else
-                echo -e "${RED}服务文件不存在: $source_service${NC}"
+                echo -e "${RED}✗ 下载自动安装脚本失败${NC}"
+                echo -e "${YELLOW}请检查网络连接或手动安装${NC}"
             fi
             ;;
             
