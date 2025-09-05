@@ -105,13 +105,17 @@ detect_available_leds() {
     echo
     
     # 解析LED状态输出，提取实际存在的LED
-    while IFS= read -r line; do
+    # 使用字符串分割方式，避免文件操作
+    local IFS=$'\n'
+    local led_lines=($all_status)
+    
+    for line in "${led_lines[@]}"; do
         if [[ "$line" =~ ^([^:]+):[[:space:]]*status[[:space:]]*=[[:space:]]*([^,]+) ]]; then
             local led_name="${BASH_REMATCH[1]}"
             AVAILABLE_LEDS+=("$led_name")
             echo -e "${GREEN}✓ 检测到LED: $led_name${NC}"
         fi
-    done <<< "$all_status"
+    done
     
     if [[ ${#AVAILABLE_LEDS[@]} -eq 0 ]]; then
         echo -e "${RED}未检测到任何LED，请检查设备兼容性${NC}"
