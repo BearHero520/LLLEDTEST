@@ -10,7 +10,6 @@ WorkingDirectory=/opt/ugreen-led-controller
 ExecStart=/opt/ugreen-led-controller/scripts/led_daemon.sh _background 30
 ExecStop=/opt/ugreen-led-controller/scripts/led_daemon.sh stop
 ExecReload=/opt/ugreen-led-controller/scripts/led_daemon.sh restart
-PIDFile=/run/ugreen-led-monitor.pid
 Restart=always
 RestartSec=10
 TimeoutStartSec=30
