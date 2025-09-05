@@ -2,9 +2,9 @@
 
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
-# 版本: 2.0.3 (优化版 - 修复HCTL槽位映射)
+# 版本: 2.0.4 (优化版 - 强制HCTL槽位映射)
 
-VERSION="2.0.3"
+VERSION="2.0.4"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -208,77 +208,23 @@ detect_disk_mapping_hctl() {
             
             local target_led="disk${led_number}"
             
-            # 检查目标LED是否可用且未被占用
+            # 强制使用正确的槽位映射，不允许自动重新分配
+            # 这确保了物理槽位和LED的正确对应
             if [[ " ${DISK_LEDS[*]} " =~ " $target_led " ]]; then
-                # 检查是否已被其他设备占用
-                local led_occupied=false
-                for existing_disk in "${!DISK_LED_MAP[@]}"; do
-                    if [[ "${DISK_LED_MAP[$existing_disk]}" == "$target_led" ]]; then
-                        led_occupied=true
-                        break
-                    fi
-                done
-                
-                if [[ "$led_occupied" == "false" ]]; then
-                    DISK_LED_MAP["/dev/$name"]="$target_led"
-                else
-                    # LED被占用，寻找下一个可用LED
-                    local found_led=""
-                    for led in "${DISK_LEDS[@]}"; do
-                        local is_used=false
-                        for existing_disk in "${!DISK_LED_MAP[@]}"; do
-                            if [[ "${DISK_LED_MAP[$existing_disk]}" == "$led" ]]; then
-                                is_used=true
-                                break
-                            fi
-                        done
-                        if [[ "$is_used" == "false" ]]; then
-                            found_led="$led"
-                            break
-                        fi
-                    done
-                    
-                    if [[ -n "$found_led" ]]; then
-                        DISK_LED_MAP["/dev/$name"]="$found_led"
-                    else
-                        DISK_LED_MAP["/dev/$name"]="none"
-                    fi
-                fi
+                DISK_LED_MAP["/dev/$name"]="$target_led"
+                echo -e "${GREEN}✓ 强制映射: /dev/$name -> $target_led (HCTL target: $hctl_target)${NC}"
             else
-                # 目标LED不存在，寻找可用LED
-                local found_led=""
-                for led in "${DISK_LEDS[@]}"; do
-                    local is_used=false
-                    for existing_disk in "${!DISK_LED_MAP[@]}"; do
-                        if [[ "${DISK_LED_MAP[$existing_disk]}" == "$led" ]]; then
-                            is_used=true
-                            break
-                        fi
-                    done
-                    if [[ "$is_used" == "false" ]]; then
-                        found_led="$led"
-                        break
-                    fi
-                done
-                
-                if [[ -n "$found_led" ]]; then
-                    DISK_LED_MAP["/dev/$name"]="$found_led"
-                else
-                    DISK_LED_MAP["/dev/$name"]="none"
-                fi
+                # 目标LED不存在于可用LED列表中
+                DISK_LED_MAP["/dev/$name"]="none"
+                echo -e "${RED}✗ LED不存在: $target_led (HCTL target: $hctl_target)${NC}"
             fi
             
             # 保存设备信息
             DISK_INFO["/dev/$name"]="HCTL:$hctl Serial:${serial:-N/A} Model:${model:-N/A} Size:${size:-N/A}"
             DISK_HCTL_MAP["/dev/$name"]="$hctl"
             
-            # 显示映射结果，包含详细的调试信息
-            local led_display="${DISK_LED_MAP["/dev/$name"]}"
-            if [[ "$led_display" == "none" ]]; then
-                echo -e "${YELLOW}⚠ /dev/$name -> 无可用LED (HCTL: $hctl, Target: $hctl_target -> 计算槽位: $led_number)${NC}"
-            else
-                echo -e "${GREEN}✓ /dev/$name -> $led_display (HCTL: $hctl, Target: $hctl_target -> 槽位: $led_number)${NC}"
-                echo -e "    ${CYAN}设备详情: ${model:-N/A} ${size:-N/A} [${serial:-N/A}]${NC}"
+            # 统计成功映射数量
+            if [[ "${DISK_LED_MAP["/dev/$name"]}" != "none" ]]; then
                 ((successful_mappings++))
             fi
         fi
