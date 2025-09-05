@@ -30,7 +30,7 @@ SUPPORTED_MODELS=(
 [[ $EUID -ne 0 ]] && { echo -e "${RED}需要root权限: sudo bash $0${NC}"; exit 1; }
 
 echo -e "${CYAN}================================${NC}"
-echo -e "${CYAN}LLLED 一键安装工具 v2.1.1${NC}"
+echo -e "${CYAN}LLLED 一键安装工具 v2.1.2${NC}"
 echo -e "${CYAN}================================${NC}"
 echo "更新时间: 2025-09-06"
 echo
