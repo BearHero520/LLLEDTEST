@@ -51,12 +51,63 @@ source "$CONFIG_FILE" 2>/dev/null || {
 detect_available_leds() {
     log_message "检测可用LED..."
     
+    # 检查LED控制程序是否存在且可执行
+    if [[ ! -x "$UGREEN_CLI" ]]; then
+        log_message "错误: LED控制程序不存在或不可执行: $UGREEN_CLI"
+        return 1
+    fi
+    
     local led_status
-    led_status=$("$UGREEN_CLI" all -status 2>/dev/null)
+    led_status=$("$UGREEN_CLI" all -status 2>&1)
+    local status_exit_code=$?
+    
+    log_message "LED检测命令退出码: $status_exit_code"
+    log_message "LED检测输出: $led_status"
+    
+    if [[ $status_exit_code -ne 0 ]]; then
+        log_message "LED控制程序执行失败，退出码: $status_exit_code"
+        log_message "错误输出: $led_status"
+        
+        # 尝试备用方法：测试性探测可用LED
+        log_message "尝试探测可用LED..."
+        DISK_LEDS=()
+        
+        # 尝试探测disk1到disk16 (支持更多LED)
+        for i in {1..16}; do
+            local test_led="disk$i"
+            if "$UGREEN_CLI" "$test_led" -status >/dev/null 2>&1; then
+                DISK_LEDS+=("$test_led")
+                log_message "探测到LED: $test_led"
+            fi
+        done
+        
+        if [[ ${#DISK_LEDS[@]} -eq 0 ]]; then
+            log_message "无法探测到任何LED，服务将以无LED模式运行"
+        else
+            log_message "探测到 ${#DISK_LEDS[@]} 个LED: ${DISK_LEDS[*]}"
+        fi
+        return 0
+    fi
     
     if [[ -z "$led_status" ]]; then
-        log_message "无法检测LED状态，请检查ugreen_leds_cli"
-        return 1
+        log_message "LED状态输出为空，尝试探测LED"
+        DISK_LEDS=()
+        
+        # 尝试探测disk1到disk16 (支持更多LED)
+        for i in {1..16}; do
+            local test_led="disk$i"
+            if "$UGREEN_CLI" "$test_led" -status >/dev/null 2>&1; then
+                DISK_LEDS+=("$test_led")
+                log_message "探测到LED: $test_led"
+            fi
+        done
+        
+        if [[ ${#DISK_LEDS[@]} -eq 0 ]]; then
+            log_message "无法探测到任何LED"
+        else
+            log_message "探测到 ${#DISK_LEDS[@]} 个LED: ${DISK_LEDS[*]}"
+        fi
+        return 0
     fi
     
     # 重置LED数组
@@ -74,8 +125,22 @@ detect_available_leds() {
     done <<< "$led_status"
     
     if [[ ${#DISK_LEDS[@]} -eq 0 ]]; then
-        log_message "未检测到硬盘LED，请检查设备兼容性"
-        return 1
+        log_message "未从状态输出中检测到硬盘LED，尝试探测LED"
+        
+        # 尝试探测disk1到disk16 (支持更多LED)
+        for i in {1..16}; do
+            local test_led="disk$i"
+            if "$UGREEN_CLI" "$test_led" -status >/dev/null 2>&1; then
+                DISK_LEDS+=("$test_led")
+                log_message "探测到LED: $test_led"
+            fi
+        done
+        
+        if [[ ${#DISK_LEDS[@]} -eq 0 ]]; then
+            log_message "无法探测到任何硬盘LED"
+        else
+            log_message "通过探测发现 ${#DISK_LEDS[@]} 个LED: ${DISK_LEDS[*]}"
+        fi
     fi
     
     log_message "可用硬盘LED: ${DISK_LEDS[*]}"
@@ -88,11 +153,59 @@ detect_disk_mapping_hctl() {
     
     # 获取所有存储设备的HCTL信息
     local hctl_info
-    hctl_info=$(lsblk -S -x hctl -o name,hctl,serial,model,size 2>/dev/null)
+    hctl_info=$(lsblk -S -x hctl -o name,hctl,serial,model,size 2>&1)
+    local lsblk_exit_code=$?
     
-    if [[ -z "$hctl_info" ]]; then
-        log_message "无法获取HCTL信息，可能系统不支持或无存储设备"
-        return 1
+    log_message "lsblk命令退出码: $lsblk_exit_code"
+    
+    if [[ $lsblk_exit_code -ne 0 || -z "$hctl_info" ]]; then
+        log_message "lsblk命令失败或无输出，尝试备用检测方法"
+        log_message "lsblk输出: $hctl_info"
+        
+        # 备用方法：直接检测/dev/sd*设备
+        DISKS=()
+        DISK_LED_MAP=()
+        DISK_INFO=()
+        DISK_HCTL_MAP=()
+        
+        local disk_count=0
+        for disk in /dev/sd[a-z]; do
+            if [[ -b "$disk" ]]; then
+                DISKS+=("$disk")
+                local led_number=$((disk_count + 1))
+                local target_led="disk${led_number}"
+                
+                # 检查这个LED是否在可用LED列表中
+                local led_available=false
+                for available_led in "${DISK_LEDS[@]}"; do
+                    if [[ "$available_led" == "$target_led" ]]; then
+                        led_available=true
+                        break
+                    fi
+                done
+                
+                if [[ "$led_available" == "true" ]]; then
+                    DISK_LED_MAP["$disk"]="$target_led"
+                    log_message "备用映射: $disk -> $target_led"
+                else
+                    DISK_LED_MAP["$disk"]="none"
+                    log_message "备用映射: $disk -> 无可用LED"
+                fi
+                
+                DISK_HCTL_MAP["$disk"]="备用:$disk_count:0:0"
+                DISK_INFO["$disk"]="Unknown Disk $(basename "$disk")"
+                
+                ((disk_count++))
+            fi
+        done
+        
+        if [[ ${#DISKS[@]} -eq 0 ]]; then
+            log_message "警告: 未检测到任何硬盘设备"
+            return 0  # 不返回错误，允许服务继续运行
+        fi
+        
+        log_message "备用检测完成，检测到 ${#DISKS[@]} 个硬盘"
+        return 0
     fi
     
     # 重置全局变量
@@ -233,12 +346,16 @@ set_disk_led_by_activity() {
     local led_name="${DISK_LED_MAP[$device]}"
     
     if [[ "$led_name" == "none" || -z "$led_name" ]]; then
+        log_message "跳过设备 $device: 无对应LED"
         return
     fi
+    
+    log_message "处理设备 $device -> LED $led_name"
     
     # 检查设备是否仍然存在
     if [[ ! -b "$device" ]]; then
         # 离线状态：彻底关闭LED
+        log_message "设备 $device 离线，关闭LED $led_name"
         "$UGREEN_CLI" "$led_name" -off >/dev/null 2>&1
         # 双重确保LED关闭
         "$UGREEN_CLI" "$led_name" -color 0 0 0 -off -brightness 0 >/dev/null 2>&1
@@ -247,15 +364,18 @@ set_disk_led_by_activity() {
     
     # 检查休眠状态
     local sleep_status=$(check_disk_sleep "$device")
+    log_message "设备 $device 休眠状态: $sleep_status"
     
     if [[ "$sleep_status" == "SLEEPING" ]]; then
         # 休眠状态 - 关闭LED
+        log_message "设备 $device 休眠，关闭LED $led_name"
         "$UGREEN_CLI" "$led_name" -off >/dev/null 2>&1
         return
     fi
     
     # 检查活动状态
     local activity=$(check_disk_activity "$device")
+    log_message "设备 $device 活动状态: $activity"
     
     # 检查SMART健康状态
     local health="GOOD"
@@ -268,6 +388,7 @@ set_disk_led_by_activity() {
             *) health="UNKNOWN" ;;
         esac
     fi
+    log_message "设备 $device 健康状态: $health"
     
     # 根据活动状态和健康状态设置LED
     case "$health" in
@@ -275,14 +396,17 @@ set_disk_led_by_activity() {
             case "$activity" in
                 "ACTIVE")
                     # 活动状态：白色，中等亮度
+                    log_message "设置 $led_name 为活动状态 (白色，亮度128)"
                     "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness 128 >/dev/null 2>&1
                     ;;
                 "IDLE")
                     # 空闲状态：淡白色，低亮度
+                    log_message "设置 $led_name 为空闲状态 (白色，亮度32)"
                     "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness 32 >/dev/null 2>&1
                     ;;
                 *)
                     # 状态未知 - 淡白色，低亮度
+                    log_message "设置 $led_name 为未知状态 (白色，亮度32)"
                     "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness 32 >/dev/null 2>&1
                     ;;
             esac
@@ -291,16 +415,19 @@ set_disk_led_by_activity() {
             case "$activity" in
                 "ACTIVE")
                     # 错误状态：红色闪烁
+                    log_message "设置 $led_name 为错误活动状态 (红色闪烁)"
                     "$UGREEN_CLI" "$led_name" -color 255 0 0 -blink 500 500 -brightness 255 >/dev/null 2>&1
                     ;;
                 *)
                     # 错误状态：红色闪烁
+                    log_message "设置 $led_name 为错误状态 (红色闪烁)"
                     "$UGREEN_CLI" "$led_name" -color 255 0 0 -blink 500 500 -brightness 255 >/dev/null 2>&1
                     ;;
             esac
             ;;
         *)
             # 状态未知 - 淡白色，低亮度
+            log_message "设置 $led_name 为健康未知状态 (白色，亮度32)"
             "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness 32 >/dev/null 2>&1
             ;;
     esac
@@ -319,21 +446,27 @@ background_monitor() {
     # 检测LED控制程序
     if [[ ! -x "$UGREEN_CLI" ]]; then
         log_message "错误: 未找到LED控制程序 $UGREEN_CLI"
-        exit 1
+        log_message "服务将以受限模式运行（无LED控制）"
     fi
     
-    # 初次检测LED和硬盘
+    # 初次检测LED和硬盘 - 使用容错模式
+    log_message "开始初始化检测..."
+    
     if ! detect_available_leds; then
-        log_message "LED检测失败"
-        exit 1
+        log_message "LED检测失败，服务将继续以受限模式运行"
     fi
     
     if ! detect_disk_mapping_hctl; then
-        log_message "硬盘映射检测失败"
-        exit 1
+        log_message "硬盘映射检测失败，服务将继续以受限模式运行"
     fi
     
     log_message "初始化完成 - LED数量: ${#DISK_LEDS[@]}, 硬盘数量: ${#DISKS[@]}"
+    
+    # 如果没有检测到任何硬盘，创建最小配置继续运行
+    if [[ ${#DISKS[@]} -eq 0 ]]; then
+        log_message "未检测到硬盘，创建最小监控配置"
+        # 不退出，而是以最小配置运行
+    fi
     
     local last_disk_count=${#DISKS[@]}
     local scan_counter=0
@@ -362,9 +495,11 @@ background_monitor() {
         fi
         
         # 为每个硬盘设置LED状态
+        log_message "开始LED状态更新 - 扫描周期 $scan_counter"
         for disk in "${DISKS[@]}"; do
             set_disk_led_by_activity "$disk"
         done
+        log_message "LED状态更新完成 - 等待 ${scan_interval}秒"
         
         ((scan_counter++))
         sleep "$scan_interval"
