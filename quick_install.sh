@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 绿联LED控制工具 - 一键安装脚本 (优化版)
-# 版本: 2.0.0 (HCTL映射+智能检测)
+# 版本: 2.0.2 (HCTL映射+准确LED检测)
 # 更新时间: 2025-09-05
 
 RED='\033[0;31m'
@@ -105,12 +105,14 @@ files=(
     "ugreen_led_controller_optimized.sh"
     "ugreen_led_controller.sh"
     "uninstall.sh"
+    "verify_detection.sh"
     "scripts/disk_status_leds.sh"
     "scripts/turn_off_all_leds.sh"
     "scripts/rainbow_effect.sh"
     "scripts/smart_disk_activity.sh"
     "scripts/custom_modes.sh"
     "scripts/led_mapping_test.sh"
+    "scripts/led_test.sh"
     "scripts/configure_mapping.sh"
     "scripts/configure_mapping_optimized.sh"
     "config/led_mapping.conf"
@@ -199,6 +201,8 @@ echo -e "${CYAN}================================${NC}"
 echo -e "${CYAN}使用说明${NC}"
 echo -e "${CYAN}================================${NC}"
 echo "启动LLLED: sudo LLLED"
+echo "验证检测: sudo bash /opt/ugreen-led-controller/verify_detection.sh"
+echo
 echo "快速命令:"
 echo "  sudo LLLED --disk-status   # 智能硬盘状态"
 echo "  sudo LLLED --monitor       # 实时监控"

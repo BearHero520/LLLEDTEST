@@ -2,9 +2,9 @@
 
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
-# 版本: 2.0.0 (优化版 - HCTL映射+多LED检测)
+# 版本: 2.0.2 (优化版 - HCTL映射+准确LED检测)
 
-VERSION="2.0.0"
+VERSION="2.0.2"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -91,16 +91,33 @@ detect_available_leds() {
     echo -e "${CYAN}检测可用LED灯...${NC}"
     
     AVAILABLE_LEDS=()
-    LED_TYPES=("power" "netdev" "disk1" "disk2" "disk3" "disk4" "disk5" "disk6" "disk7" "disk8")
     
-    for led in "${LED_TYPES[@]}"; do
-        if $UGREEN_LEDS_CLI "$led" -status &>/dev/null; then
-            AVAILABLE_LEDS+=("$led")
-            echo -e "${GREEN}✓ 检测到LED: $led${NC}"
-        else
-            echo -e "${YELLOW}✗ LED不可用: $led${NC}"
+    # 先检测所有LED状态
+    local all_status=$($UGREEN_LEDS_CLI all -status 2>/dev/null)
+    
+    if [[ -z "$all_status" ]]; then
+        echo -e "${RED}无法获取LED状态，请检查LED控制程序${NC}"
+        return 1
+    fi
+    
+    echo -e "${YELLOW}检测到的LED状态:${NC}"
+    echo "$all_status"
+    echo
+    
+    # 解析LED状态输出，提取实际存在的LED
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^([^:]+):[[:space:]]*status[[:space:]]*=[[:space:]]*([^,]+) ]]; then
+            local led_name="${BASH_REMATCH[1]}"
+            AVAILABLE_LEDS+=("$led_name")
+            echo -e "${GREEN}✓ 检测到LED: $led_name${NC}"
         fi
-    done
+    done <<< "$all_status"
+    done <<< "$all_status"
+    
+    if [[ ${#AVAILABLE_LEDS[@]} -eq 0 ]]; then
+        echo -e "${RED}未检测到任何LED，请检查设备兼容性${NC}"
+        return 1
+    fi
     
     echo -e "${BLUE}可用LED数量: ${#AVAILABLE_LEDS[@]}${NC}"
     
