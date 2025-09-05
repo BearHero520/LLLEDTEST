@@ -1355,178 +1355,37 @@ background_service_management() {
             local source_service="$SCRIPT_DIR/systemd/ugreen-led-monitor.service"
             local daemon_script="$SCRIPT_DIR/scripts/led_daemon.sh"
             
-            # 确保目录存在
-            mkdir -p "$SCRIPT_DIR/systemd" "$SCRIPT_DIR/scripts"
-            
-            # 创建systemd服务文件（如果不存在）
+            # 检查必要文件是否存在
             if [[ ! -f "$source_service" ]]; then
-                echo -e "${YELLOW}创建systemd服务文件...${NC}"
-                cat > "$source_service" << 'EOF'
-[Unit]
-Description=UGREEN LED Auto Monitor Service - 硬盘状态和插拔监控
-Documentation=https://github.com/BearHero520/LLLED
-After=network.target local-fs.target
-
-[Service]
-Type=forking
-User=root
-WorkingDirectory=/opt/ugreen-led-controller
-ExecStart=/opt/ugreen-led-controller/scripts/led_daemon.sh start 30
-ExecStop=/opt/ugreen-led-controller/scripts/led_daemon.sh stop
-ExecReload=/opt/ugreen-led-controller/scripts/led_daemon.sh restart
-PIDFile=/var/run/ugreen-led-monitor.pid
-Restart=always
-RestartSec=10
-TimeoutStartSec=30
-TimeoutStopSec=30
-
-# 环境变量
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-# 安全设置
-NoNewPrivileges=false
-PrivateTmp=false
-
-# 日志设置
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=ugreen-led-monitor
-
-[Install]
-WantedBy=multi-user.target
-EOF
-                echo -e "${GREEN}✓ systemd服务文件已创建${NC}"
+                echo -e "${RED}✗ 服务文件不存在: $source_service${NC}"
+                echo -e "${YELLOW}请确保已正确安装LLLED系统${NC}"
+                return 1
             fi
             
-            # 创建守护脚本（如果不存在）
             if [[ ! -f "$daemon_script" ]]; then
-                echo -e "${YELLOW}创建守护脚本...${NC}"
-                cat > "$daemon_script" << 'EOF'
-#!/bin/bash
-
-# UGREEN LED 后台监控服务
-# 自动监控硬盘状态变化和插拔事件
-
-SERVICE_NAME="ugreen-led-monitor"
-LOG_FILE="/var/log/${SERVICE_NAME}.log"
-PID_FILE="/var/run/${SERVICE_NAME}.pid"
-SCRIPT_DIR="/opt/ugreen-led-controller"
-
-# 日志函数
-log_message() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
-}
-
-# 后台监控函数
-background_monitor() {
-    local scan_interval=${1:-30}
-    
-    while true; do
-        # 检测硬盘状态并更新LED
-        if [[ -f "$SCRIPT_DIR/ugreen_leds_cli" ]]; then
-            # 获取硬盘列表
-            local disks=($(lsblk -dn -o NAME | grep -E '^sd[a-z]$|^nvme[0-9]+n[0-9]+$' | head -4))
+                echo -e "${RED}✗ 守护脚本不存在: $daemon_script${NC}"
+                echo -e "${YELLOW}请确保已正确安装LLLED系统${NC}"
+                return 1
+            fi
             
-            for i in "${!disks[@]}"; do
-                local disk="/dev/${disks[$i]}"
-                local led_id="disk$((i+1))"
-                
-                if [[ -b "$disk" ]]; then
-                    # 检查活动状态
-                    local iostat_output=$(iostat -d 1 2 "$disk" 2>/dev/null | tail -1)
-                    local read_kb=$(echo "$iostat_output" | awk '{print $3}')
-                    local write_kb=$(echo "$iostat_output" | awk '{print $4}')
-                    
-                    if (( $(echo "$read_kb > 0.1 || $write_kb > 0.1" | bc -l 2>/dev/null || echo 0) )); then
-                        # 活动状态：白色亮
-                        "$SCRIPT_DIR/ugreen_leds_cli" "$led_id" 255 255 255 128 >/dev/null 2>&1
-                    else
-                        # 休眠状态：淡白色
-                        "$SCRIPT_DIR/ugreen_leds_cli" "$led_id" 255 255 255 32 >/dev/null 2>&1
-                    fi
-                else
-                    # 离线状态：关闭
-                    "$SCRIPT_DIR/ugreen_leds_cli" "$led_id" 0 0 0 0 >/dev/null 2>&1
-                fi
-            done
-        fi
-        
-        sleep "$scan_interval"
-    done
-}
-
-# 启动服务
-start_service() {
-    local scan_interval=${1:-30}
-    
-    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        echo "服务已在运行"
-        return 1
-    fi
-    
-    log_message "启动UGREEN LED监控服务 (扫描间隔: ${scan_interval}秒)..."
-    
-    # 后台运行监控
-    background_monitor "$scan_interval" &
-    local pid=$!
-    
-    echo "$pid" > "$PID_FILE"
-    log_message "服务已启动，PID: $pid"
-    echo "✓ 服务已启动"
-}
-
-# 停止服务
-stop_service() {
-    if [[ -f "$PID_FILE" ]]; then
-        local pid=$(cat "$PID_FILE")
-        if kill "$pid" 2>/dev/null; then
-            log_message "服务已停止"
-            echo "✓ 服务已停止"
-        fi
-        rm -f "$PID_FILE"
-    else
-        echo "服务未运行"
-    fi
-}
-
-# 查看状态
-status_service() {
-    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        local pid=$(cat "$PID_FILE")
-        echo "✓ 服务正在运行 (PID: $pid)"
-        return 0
-    else
-        echo "✗ 服务未运行"
-        return 1
-    fi
-}
-
-# 主函数
-case "$1" in
-    start)
-        shift
-        start_service "$@"
-        ;;
-    stop)
-        stop_service
-        ;;
-    restart)
-        stop_service
-        sleep 2
-        shift
-        start_service "$@"
-        ;;
-    status)
-        status_service
-        ;;
-    *)
-        echo "用法: $0 {start|stop|restart|status} [scan_interval]"
-        exit 1
-        ;;
-esac
-EOF
+            echo -e "${YELLOW}使用现有的systemd服务文件...${NC}"
+            echo "服务文件路径: $source_service"
+            echo "守护脚本路径: $daemon_script"
+            
+            # 验证文件内容
+            echo -e "${CYAN}验证服务配置...${NC}"
+            if grep -q "ExecStart.*led_daemon.sh" "$source_service"; then
+                echo -e "${GREEN}✓ 服务文件配置正确${NC}"
+            else
+                echo -e "${RED}✗ 服务文件配置异常${NC}"
+                return 1
+            fi
+            
+            if [[ -x "$daemon_script" ]]; then
+                echo -e "${GREEN}✓ 守护脚本可执行${NC}"
+            else
+                echo -e "${YELLOW}设置守护脚本可执行权限...${NC}"
                 chmod +x "$daemon_script"
-                echo -e "${GREEN}✓ 守护脚本已创建${NC}"
             fi
             
             # 安装服务

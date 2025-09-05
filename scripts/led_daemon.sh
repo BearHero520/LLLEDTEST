@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # UGREEN LED 后台监控服务
+# 基于smart_disk_activity.sh的智能检测机制
 # 自动监控硬盘状态变化和插拔事件
-# 功能: 活动检测、休眠监控、插拔响应、LED状态控制
 
 # 服务配置
 SERVICE_NAME="ugreen-led-monitor"
@@ -14,7 +14,21 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
 NC='\033[0m'
+
+# 获取脚本目录
+SCRIPT_DIR="/opt/ugreen-led-controller"
+CONFIG_FILE="$SCRIPT_DIR/config/led_mapping.conf"
+UGREEN_CLI="$SCRIPT_DIR/ugreen_leds_cli"
+
+# 全局变量
+DISKS=()
+DISK_LEDS=()
+declare -A DISK_LED_MAP
+declare -A DISK_INFO
+declare -A DISK_HCTL_MAP
 
 # 日志函数
 log_message() {
@@ -27,153 +41,417 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-# 查找主控制脚本
-MAIN_SCRIPT="/opt/ugreen-led-controller/ugreen_led_controller_optimized.sh"
-if [[ ! -f "$MAIN_SCRIPT" ]]; then
-    echo "未找到主控制脚本: $MAIN_SCRIPT"
-    exit 1
-fi
+# 加载配置
+source "$CONFIG_FILE" 2>/dev/null || {
+    log_message "使用默认配置"
+    DEFAULT_BRIGHTNESS=64; LOW_BRIGHTNESS=16; HIGH_BRIGHTNESS=128
+}
+
+# 检测可用LED
+detect_available_leds() {
+    log_message "检测可用LED..."
+    
+    local led_status
+    led_status=$("$UGREEN_CLI" all -status 2>/dev/null)
+    
+    if [[ -z "$led_status" ]]; then
+        log_message "无法检测LED状态，请检查ugreen_leds_cli"
+        return 1
+    fi
+    
+    # 重置LED数组
+    DISK_LEDS=()
+    
+    # 解析LED状态，提取可用的disk LED
+    while read -r line; do
+        if [[ "$line" =~ LED[[:space:]]+([^[:space:]]+) ]]; then
+            local led_name="${BASH_REMATCH[1]}"
+            if [[ "$led_name" =~ ^disk[0-9]+$ ]]; then
+                DISK_LEDS+=("$led_name")
+                log_message "检测到硬盘LED: $led_name"
+            fi
+        fi
+    done <<< "$led_status"
+    
+    if [[ ${#DISK_LEDS[@]} -eq 0 ]]; then
+        log_message "未检测到硬盘LED，请检查设备兼容性"
+        return 1
+    fi
+    
+    log_message "可用硬盘LED: ${DISK_LEDS[*]}"
+    return 0
+}
+
+# HCTL硬盘映射检测
+detect_disk_mapping_hctl() {
+    log_message "使用HCTL方式检测硬盘映射..."
+    
+    # 获取所有存储设备的HCTL信息
+    local hctl_info
+    hctl_info=$(lsblk -S -x hctl -o name,hctl,serial,model,size 2>/dev/null)
+    
+    if [[ -z "$hctl_info" ]]; then
+        log_message "无法获取HCTL信息，可能系统不支持或无存储设备"
+        return 1
+    fi
+    
+    # 重置全局变量
+    DISKS=()
+    DISK_LED_MAP=()
+    DISK_INFO=()
+    DISK_HCTL_MAP=()
+    
+    local successful_mappings=0
+    
+    # 使用临时文件处理数据
+    local temp_file="/tmp/hctl_mapping_$$"
+    echo "$hctl_info" > "$temp_file"
+    
+    while IFS= read -r line; do
+        # 跳过标题行和空行
+        if [[ "$line" =~ ^NAME ]] || [[ -z "$(echo "$line" | tr -d '[:space:]')" ]]; then
+            continue
+        fi
+        
+        # 解析行内容
+        local name hctl serial model size
+        name=$(echo "$line" | awk '{print $1}')
+        hctl=$(echo "$line" | awk '{print $2}')
+        serial=$(echo "$line" | awk '{print $3}')
+        model=$(echo "$line" | awk '{print $4}')
+        size=$(echo "$line" | awk '{print $5}')
+        
+        # 检查是否是有效的存储设备
+        if [[ -b "/dev/$name" && "$name" =~ ^sd[a-z]+$ ]]; then
+            DISKS+=("/dev/$name")
+            
+            log_message "处理设备: /dev/$name (HCTL: $hctl)"
+            
+            # 提取HCTL host值并映射到LED槽位
+            local hctl_host=$(echo "$hctl" | cut -d: -f1)
+            local led_number
+            
+            case "$hctl_host" in
+                "0") led_number=1 ;;
+                "1") led_number=2 ;;
+                "2") led_number=3 ;;
+                "3") led_number=4 ;;
+                "4") led_number=5 ;;
+                "5") led_number=6 ;;
+                "6") led_number=7 ;;
+                "7") led_number=8 ;;
+                *) led_number=$((hctl_host + 1)) ;;
+            esac
+            
+            local target_led="disk${led_number}"
+            
+            # 检查目标LED是否在可用LED列表中
+            local led_available=false
+            for available_led in "${DISK_LEDS[@]}"; do
+                if [[ "$available_led" == "$target_led" ]]; then
+                    led_available=true
+                    break
+                fi
+            done
+            
+            if [[ "$led_available" == "true" ]]; then
+                DISK_LED_MAP["/dev/$name"]="$target_led"
+                DISK_HCTL_MAP["/dev/$name"]="$hctl"
+                DISK_INFO["/dev/$name"]="$model $size (SN: $serial)"
+                
+                log_message "映射成功: /dev/$name -> $target_led (HCTL: $hctl)"
+                ((successful_mappings++))
+            else
+                DISK_LED_MAP["/dev/$name"]="none"
+                DISK_HCTL_MAP["/dev/$name"]="$hctl"
+                DISK_INFO["/dev/$name"]="$model $size (SN: $serial)"
+                
+                log_message "映射失败: /dev/$name -> 无可用LED (需要: $target_led)"
+            fi
+        fi
+    done < "$temp_file"
+    
+    rm -f "$temp_file"
+    
+    log_message "HCTL映射完成，成功映射 $successful_mappings 个设备"
+    return 0
+}
+
+# 检测硬盘活动状态
+check_disk_activity() {
+    local device="$1"
+    
+    # 移除/dev/前缀
+    device=$(basename "$device")
+    
+    # 读取磁盘统计信息 (读写扇区数)
+    if [[ -f "/proc/diskstats" ]]; then
+        local stats_before=$(grep " $device " /proc/diskstats | awk '{print $6+$10}')
+        sleep 2
+        local stats_after=$(grep " $device " /proc/diskstats | awk '{print $6+$10}')
+        
+        if [[ "$stats_after" -gt "$stats_before" ]]; then
+            echo "ACTIVE"
+        else
+            echo "IDLE"
+        fi
+    else
+        echo "UNKNOWN"
+    fi
+}
+
+# 检测硬盘是否休眠
+check_disk_sleep() {
+    local device="$1"
+    
+    # 移除/dev/前缀
+    device=$(basename "$device")
+    
+    # 方法1: 使用smartctl检查电源状态
+    if command -v smartctl >/dev/null 2>&1; then
+        local power_mode=$(smartctl -i -n standby "/dev/$device" 2>/dev/null | grep -i "power mode" | awk '{print $NF}')
+        case "${power_mode^^}" in
+            "STANDBY"|"SLEEP"|"IDLE")
+                echo "SLEEPING"
+                return
+                ;;
+        esac
+    fi
+    
+    # 方法2: 检查设备是否响应
+    if ! smartctl -i "/dev/$device" >/dev/null 2>&1; then
+        echo "SLEEPING"
+        return
+    fi
+    
+    echo "AWAKE"
+}
+
+# 设置硬盘LED根据活动状态
+set_disk_led_by_activity() {
+    local device="$1"
+    local led_name="${DISK_LED_MAP[$device]}"
+    
+    if [[ "$led_name" == "none" || -z "$led_name" ]]; then
+        return
+    fi
+    
+    # 检查设备是否仍然存在
+    if [[ ! -b "$device" ]]; then
+        # 离线状态：彻底关闭LED
+        "$UGREEN_CLI" "$led_name" -off >/dev/null 2>&1
+        # 双重确保LED关闭
+        "$UGREEN_CLI" "$led_name" -color 0 0 0 -off -brightness 0 >/dev/null 2>&1
+        return
+    fi
+    
+    # 检查休眠状态
+    local sleep_status=$(check_disk_sleep "$device")
+    
+    if [[ "$sleep_status" == "SLEEPING" ]]; then
+        # 休眠状态 - 关闭LED
+        "$UGREEN_CLI" "$led_name" -off >/dev/null 2>&1
+        return
+    fi
+    
+    # 检查活动状态
+    local activity=$(check_disk_activity "$device")
+    
+    # 检查SMART健康状态
+    local health="GOOD"
+    if command -v smartctl >/dev/null 2>&1; then
+        local device_basename=$(basename "$device")
+        local smart_health=$(smartctl -H "/dev/$device_basename" 2>/dev/null | grep -E "(SMART overall-health|SMART Health Status)" | awk '{print $NF}')
+        case "${smart_health^^}" in
+            "FAILED"|"FAILING") health="BAD" ;;
+            "PASSED"|"OK") health="GOOD" ;;
+            *) health="UNKNOWN" ;;
+        esac
+    fi
+    
+    # 根据活动状态和健康状态设置LED
+    case "$health" in
+        "GOOD")
+            case "$activity" in
+                "ACTIVE")
+                    # 活动状态：白色，中等亮度
+                    "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness 128 >/dev/null 2>&1
+                    ;;
+                "IDLE")
+                    # 空闲状态：淡白色，低亮度
+                    "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness 32 >/dev/null 2>&1
+                    ;;
+                *)
+                    # 状态未知 - 淡白色，低亮度
+                    "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness 32 >/dev/null 2>&1
+                    ;;
+            esac
+            ;;
+        "BAD")
+            case "$activity" in
+                "ACTIVE")
+                    # 错误状态：红色闪烁
+                    "$UGREEN_CLI" "$led_name" -color 255 0 0 -blink 500 500 -brightness 255 >/dev/null 2>&1
+                    ;;
+                *)
+                    # 错误状态：红色闪烁
+                    "$UGREEN_CLI" "$led_name" -color 255 0 0 -blink 500 500 -brightness 255 >/dev/null 2>&1
+                    ;;
+            esac
+            ;;
+        *)
+            # 状态未知 - 淡白色，低亮度
+            "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness 32 >/dev/null 2>&1
+            ;;
+    esac
+}
 
 # 后台监控函数
 background_monitor() {
-    log_message "UGREEN LED监控服务启动"
-    
-    # 设置扫描间隔（默认30秒）
     local scan_interval=${1:-30}
+    
+    log_message "启动UGREEN LED监控服务 (基于smart_disk_activity.sh机制)"
     log_message "扫描间隔设置为: ${scan_interval}秒"
     
     # 记录PID
     echo $$ > "$PID_FILE"
     
-    # 初始化系统
-    source "$MAIN_SCRIPT"
-    
-    # 检测系统
-    if ! detect_system; then
-        log_message "系统检测失败，服务退出"
+    # 检测LED控制程序
+    if [[ ! -x "$UGREEN_CLI" ]]; then
+        log_message "错误: 未找到LED控制程序 $UGREEN_CLI"
         exit 1
     fi
     
-    log_message "系统检测成功 - LED数量: ${#AVAILABLE_LEDS[@]}, 硬盘数量: ${#DISKS[@]}"
+    # 初次检测LED和硬盘
+    if ! detect_available_leds; then
+        log_message "LED检测失败"
+        exit 1
+    fi
     
-    # 恢复系统LED
-    restore_system_leds
-    log_message "系统LED已恢复"
+    if ! detect_disk_mapping_hctl; then
+        log_message "硬盘映射检测失败"
+        exit 1
+    fi
+    
+    log_message "初始化完成 - LED数量: ${#DISK_LEDS[@]}, 硬盘数量: ${#DISKS[@]}"
     
     local last_disk_count=${#DISKS[@]}
     local scan_counter=0
     
     # 主监控循环
     while true; do
-        # 定期重新扫描硬盘
-        if (( scan_counter % scan_interval == 0 )); then
+        # 每隔一定时间重新扫描硬盘 (热插拔检测)
+        if (( scan_counter % 6 == 0 )); then  # 每6个周期重新扫描
             log_message "重新扫描硬盘设备..."
             
-            # 重新检测硬盘
-            if detect_disk_mapping_hctl; then
-                log_message "HCTL重新检测成功"
-            else
-                log_message "HCTL检测失败，使用备用方式"
-                detect_disk_mapping_fallback
-            fi
+            # 重新检测LED (防止系统变化)
+            detect_available_leds >/dev/null 2>&1
             
-            # 检查硬盘数量变化
-            if [[ ${#DISKS[@]} -ne $last_disk_count ]]; then
-                log_message "硬盘数量变化: $last_disk_count -> ${#DISKS[@]}"
-                last_disk_count=${#DISKS[@]}
+            # 重新检测硬盘
+            if detect_disk_mapping_hctl >/dev/null 2>&1; then
+                log_message "硬盘重新检测成功"
                 
-                # 重新恢复系统LED
-                restore_system_leds
+                # 检查硬盘数量变化
+                if [[ ${#DISKS[@]} -ne $last_disk_count ]]; then
+                    log_message "硬盘数量变化: $last_disk_count -> ${#DISKS[@]}"
+                    last_disk_count=${#DISKS[@]}
+                fi
+            else
+                log_message "硬盘检测失败，继续使用现有配置"
             fi
         fi
         
-        # 更新所有硬盘LED状态 (监控活动、休眠、离线状态)
+        # 为每个硬盘设置LED状态
         for disk in "${DISKS[@]}"; do
-            local status=$(get_disk_status "$disk")
-            set_disk_led "$disk" "$status"
+            set_disk_led_by_activity "$disk"
         done
         
         ((scan_counter++))
-        sleep 1
+        sleep "$scan_interval"
     done
 }
 
-# 服务控制函数
-case "${1:-start}" in
-    "start")
-        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-            echo "服务已在运行 (PID: $(cat "$PID_FILE"))"
-            exit 1
+# 启动服务
+start_service() {
+    local scan_interval=${1:-30}
+    
+    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "服务已在运行"
+        return 1
+    fi
+    
+    log_message "启动UGREEN LED监控服务 (扫描间隔: ${scan_interval}秒)..."
+    
+    # 后台运行监控
+    background_monitor "$scan_interval" &
+    local pid=$!
+    
+    echo "$pid" > "$PID_FILE"
+    log_message "服务已启动，PID: $pid"
+    echo "✓ 服务已启动"
+}
+
+# 停止服务
+stop_service() {
+    if [[ -f "$PID_FILE" ]]; then
+        local pid=$(cat "$PID_FILE")
+        if kill "$pid" 2>/dev/null; then
+            log_message "服务已停止"
+            echo "✓ 服务已停止"
         fi
-        
-        echo "启动UGREEN LED监控服务..."
-        # 扫描间隔参数（默认30秒）
-        scan_interval=${2:-30}
-        
-        # 后台运行
-        nohup bash "$0" _background "$scan_interval" > /dev/null 2>&1 &
+        rm -f "$PID_FILE"
+    else
+        echo "服务未运行"
+    fi
+}
+
+# 查看状态
+status_service() {
+    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        local pid=$(cat "$PID_FILE")
+        echo "✓ 服务正在运行 (PID: $pid)"
+        echo "日志文件: $LOG_FILE"
+        if [[ -f "$LOG_FILE" ]]; then
+            echo "最近日志:"
+            tail -5 "$LOG_FILE"
+        fi
+        return 0
+    else
+        echo "✗ 服务未运行"
+        [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
+        return 1
+    fi
+}
+
+# 主函数
+case "$1" in
+    start)
+        shift
+        start_service "$@"
+        ;;
+    stop)
+        stop_service
+        ;;
+    restart)
+        stop_service
         sleep 2
-        
-        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-            echo -e "${GREEN}✓ 服务启动成功 (PID: $(cat "$PID_FILE"))${NC}"
-            echo "扫描间隔: ${scan_interval}秒"
-            echo "日志文件: $LOG_FILE"
-        else
-            echo -e "${RED}✗ 服务启动失败${NC}"
-            exit 1
-        fi
+        shift
+        start_service "$@"
         ;;
-        
-    "stop")
-        if [[ -f "$PID_FILE" ]]; then
-            local pid=$(cat "$PID_FILE")
-            if kill -0 "$pid" 2>/dev/null; then
-                echo "停止UGREEN LED监控服务..."
-                kill "$pid"
-                rm -f "$PID_FILE"
-                echo -e "${GREEN}✓ 服务已停止${NC}"
-            else
-                echo "服务未在运行"
-                rm -f "$PID_FILE"
-            fi
-        else
-            echo "服务未在运行"
-        fi
+    status)
+        status_service
         ;;
-        
-    "restart")
-        "$0" stop
-        sleep 2
-        "$0" start "${2:-30}"
-        ;;
-        
-    "status")
-        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-            echo -e "${GREEN}✓ 服务正在运行 (PID: $(cat "$PID_FILE"))${NC}"
-            echo "日志文件: $LOG_FILE"
-            if [[ -f "$LOG_FILE" ]]; then
-                echo "最近日志:"
-                tail -5 "$LOG_FILE"
-            fi
-        else
-            echo -e "${RED}✗ 服务未运行${NC}"
-            [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
-        fi
-        ;;
-        
-    "logs")
+    logs)
         if [[ -f "$LOG_FILE" ]]; then
             tail -f "$LOG_FILE"
         else
             echo "日志文件不存在: $LOG_FILE"
         fi
         ;;
-        
-    "_background")
+    _background)
         # 内部使用，启动后台监控
         background_monitor "$2"
         ;;
-        
     *)
         echo "用法: $0 {start|stop|restart|status|logs} [扫描间隔秒数]"
         echo "扫描间隔选项: 2(快速) 30(标准) 60(节能)"
