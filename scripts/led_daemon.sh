@@ -699,7 +699,7 @@ case "$1" in
         ;;
     _background)
         # systemd使用，直接运行后台监控
-        local scan_interval=${2:-30}
+        scan_interval=${2:-30}
         log_message "从systemd启动后台监控服务 (扫描间隔: ${scan_interval}秒)"
         
         # 记录PID
