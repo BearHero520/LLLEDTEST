@@ -144,22 +144,40 @@ select_color() {
     echo -e "${BLUE}$prompt${NC}"
     echo "可选颜色:"
     
-    # 创建颜色列表数组
-    local color_list=("红色" "绿色" "蓝色" "白色" "黄色" "青色" "紫色" "橙色" "粉色" "浅绿" "天蓝" "金色" "关闭")
-    
-    local i=1
-    for color_name in "${color_list[@]}"; do
-        local rgb_value="${COLOR_PRESETS[$color_name]}"
-        echo "  $i) $color_name ($rgb_value)"
-        ((i++))
-    done
-    echo "  $i) 自定义RGB"
+    # 直接定义颜色映射，避免数组访问问题
+    echo "  1) 红色 (255 0 0)"
+    echo "  2) 绿色 (0 255 0)"
+    echo "  3) 蓝色 (0 0 255)"
+    echo "  4) 白色 (255 255 255)"
+    echo "  5) 黄色 (255 255 0)"
+    echo "  6) 青色 (0 255 255)"
+    echo "  7) 紫色 (255 0 255)"
+    echo "  8) 橙色 (255 165 0)"
+    echo "  9) 粉色 (255 192 203)"
+    echo " 10) 浅绿 (144 238 144)"
+    echo " 11) 天蓝 (135 206 235)"
+    echo " 12) 金色 (255 215 0)"
+    echo " 13) 关闭 (0 0 0)"
+    echo " 14) 自定义RGB"
     
     while true; do
-        read -p "请选择颜色 (1-$i): " choice
+        read -p "请选择颜色 (1-14): " choice
         
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le $i ]]; then
-            if [[ "$choice" -eq $i ]]; then
+        case "$choice" in
+            1) echo "255 0 0"; return ;;
+            2) echo "0 255 0"; return ;;
+            3) echo "0 0 255"; return ;;
+            4) echo "255 255 255"; return ;;
+            5) echo "255 255 0"; return ;;
+            6) echo "0 255 255"; return ;;
+            7) echo "255 0 255"; return ;;
+            8) echo "255 165 0"; return ;;
+            9) echo "255 192 203"; return ;;
+            10) echo "144 238 144"; return ;;
+            11) echo "135 206 235"; return ;;
+            12) echo "255 215 0"; return ;;
+            13) echo "0 0 0"; return ;;
+            14)
                 # 自定义RGB
                 echo "请输入RGB值 (格式: R G B, 范围 0-255):"
                 read -p "红色值 (0-255): " r
@@ -173,14 +191,11 @@ select_color() {
                 else
                     echo -e "${RED}无效的RGB值，请重试${NC}"
                 fi
-            else
-                local selected_color="${color_list[$((choice-1))]}"
-                echo "${COLOR_PRESETS[$selected_color]}"
-                return
-            fi
-        else
-            echo -e "${RED}无效选择，请重试${NC}"
-        fi
+                ;;
+            *)
+                echo -e "${RED}无效选择，请重试${NC}"
+                ;;
+        esac
     done
 }
 
