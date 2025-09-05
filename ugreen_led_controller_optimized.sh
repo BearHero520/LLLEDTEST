@@ -1143,10 +1143,11 @@ background_service_management() {
     echo "5) 查看服务日志"
     echo "6) 安装systemd服务 (开机自启)"
     echo "7) 卸载systemd服务"
+    echo "8) 修复systemd服务配置"
     echo "0) 返回主菜单"
     echo
     
-    read -p "请选择操作 (1-7/0): " service_choice
+    read -p "请选择操作 (1-8/0): " service_choice
     
     case $service_choice in
         1)
@@ -1445,7 +1446,7 @@ background_monitor() {
 
 # 启动服务
 start_service() {
-    local scan_interval=${2:-30}
+    local scan_interval=${1:-30}
     
     if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
         echo "服务已在运行"
@@ -1477,9 +1478,22 @@ stop_service() {
     fi
 }
 
+# 查看状态
+status_service() {
+    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        local pid=$(cat "$PID_FILE")
+        echo "✓ 服务正在运行 (PID: $pid)"
+        return 0
+    else
+        echo "✗ 服务未运行"
+        return 1
+    fi
+}
+
 # 主函数
 case "$1" in
     start)
+        shift
         start_service "$@"
         ;;
     stop)
@@ -1488,10 +1502,14 @@ case "$1" in
     restart)
         stop_service
         sleep 2
+        shift
         start_service "$@"
         ;;
+    status)
+        status_service
+        ;;
     *)
-        echo "用法: $0 {start|stop|restart} [scan_interval]"
+        echo "用法: $0 {start|stop|restart|status} [scan_interval]"
         exit 1
         ;;
 esac
@@ -1527,6 +1545,65 @@ EOF
                 echo -e "${GREEN}✓ Systemd服务已卸载${NC}"
             else
                 echo -e "${YELLOW}取消操作${NC}"
+            fi
+            ;;
+            
+        8)
+            echo -e "${CYAN}修复systemd服务配置...${NC}"
+            echo "此选项将修复systemd服务文件中的错误配置"
+            echo -e "${YELLOW}注意: 这将重新安装服务文件并重启服务${NC}"
+            echo
+            
+            read -p "确认要修复systemd服务配置吗？ (y/N): " confirm_fix
+            if [[ "$confirm_fix" =~ ^[Yy]$ ]]; then
+                echo -e "${CYAN}停止当前服务...${NC}"
+                systemctl stop ugreen-led-monitor.service 2>/dev/null
+                systemctl disable ugreen-led-monitor.service 2>/dev/null
+                
+                echo -e "${CYAN}移除错误的服务文件...${NC}"
+                rm -f /etc/systemd/system/ugreen-led-monitor.service
+                
+                echo -e "${CYAN}安装正确的服务文件...${NC}"
+                local source_service="$SCRIPT_DIR/systemd/ugreen-led-monitor.service"
+                if [[ -f "$source_service" ]]; then
+                    cp "$source_service" /etc/systemd/system/
+                    chmod 644 /etc/systemd/system/ugreen-led-monitor.service
+                    echo -e "${GREEN}✓ 服务文件已更新${NC}"
+                else
+                    echo -e "${RED}✗ 找不到正确的服务文件${NC}"
+                    return 1
+                fi
+                
+                echo -e "${CYAN}重新加载systemd配置...${NC}"
+                systemctl daemon-reload
+                
+                echo -e "${CYAN}启用服务...${NC}"
+                systemctl enable ugreen-led-monitor.service
+                
+                echo -e "${CYAN}检查服务配置...${NC}"
+                echo "当前服务配置:"
+                echo "========================"
+                systemctl cat ugreen-led-monitor.service | grep -E "ExecStart|WorkingDirectory|Type"
+                echo "========================"
+                
+                echo
+                read -p "现在启动修复后的服务？ (y/N): " start_fixed
+                if [[ "$start_fixed" =~ ^[Yy]$ ]]; then
+                    echo -e "${CYAN}启动服务...${NC}"
+                    if systemctl start ugreen-led-monitor.service; then
+                        echo -e "${GREEN}✓ 服务启动成功${NC}"
+                        sleep 2
+                        systemctl status ugreen-led-monitor.service --no-pager -l
+                    else
+                        echo -e "${RED}✗ 服务启动失败${NC}"
+                        echo "检查详细错误信息:"
+                        journalctl -u ugreen-led-monitor.service --no-pager -n 10
+                    fi
+                fi
+                
+                echo -e "${GREEN}✓ Systemd服务修复完成!${NC}"
+            else
+                echo -e "${YELLOW}取消修复操作${NC}"
             fi
             ;;
             
