@@ -20,10 +20,35 @@ NETWORK_OFFLINE="0 0 0"         # 离线状态 - 关闭
 DISK_ACTIVE="0 255 0"           # 活动状态 - 绿色
 DISK_IDLE="255 255 0"           # 空闲状态 - 黄色
 DISK_ERROR="255 0 0"            # 错误状态 - 红色
-DISK_OFFLINE="0 0 0"            # 离线状态 - 关闭PT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+DISK_OFFLINE="0 0 0"            # 离线状态 - 关闭
+
+# 脚本目录和配置
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 source "$SCRIPT_DIR/config/led_mapping.conf"
 
-UGREEN_LEDS_CLI="$SCRIPT_DIR/ugreen_leds_cli"
+# LED控制程序路径检测
+UGREEN_LEDS_CLI=""
+detect_led_cli() {
+    local search_paths=(
+        "$SCRIPT_DIR/ugreen_leds_cli"
+        "/opt/ugreen-led-controller/ugreen_leds_cli"
+        "/usr/bin/ugreen_leds_cli"
+        "/usr/local/bin/ugreen_leds_cli"
+        "./ugreen_leds_cli"
+    )
+    
+    for path in "${search_paths[@]}"; do
+        if [[ -x "$path" ]]; then
+            UGREEN_LEDS_CLI="$path"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# 检测LED控制程序
+detect_led_cli
+
 COLOR_CONFIG="$SCRIPT_DIR/config/color_themes.conf"
 
 # 颜色定义
@@ -125,9 +150,10 @@ show_color_preview() {
     local color_rgb="$1"
     local led_name="$2"
     
-    if [[ ! -f "$UGREEN_LEDS_CLI" ]]; then
-        echo -e "${RED}错误: ugreen_leds_cli 未找到${NC}"
-        return 1
+    if [[ -z "$UGREEN_LEDS_CLI" ]] || [[ ! -x "$UGREEN_LEDS_CLI" ]]; then
+        echo -e "${YELLOW}提示: LED控制程序未找到，跳过预览${NC}"
+        echo -e "${CYAN}选择的颜色: $color_rgb${NC}"
+        return 0
     fi
     
     # 设置LED颜色预览（持续3秒）
@@ -141,24 +167,24 @@ show_color_preview() {
 select_color() {
     local prompt="$1"
     
-    echo -e "${BLUE}$prompt${NC}"
-    echo "可选颜色:"
+    echo -e "${BLUE}$prompt${NC}" >&2
+    echo "可选颜色:" >&2
     
     # 直接定义颜色映射，避免数组访问问题
-    echo "  1) 红色 (255 0 0)"
-    echo "  2) 绿色 (0 255 0)"
-    echo "  3) 蓝色 (0 0 255)"
-    echo "  4) 白色 (255 255 255)"
-    echo "  5) 黄色 (255 255 0)"
-    echo "  6) 青色 (0 255 255)"
-    echo "  7) 紫色 (255 0 255)"
-    echo "  8) 橙色 (255 165 0)"
-    echo "  9) 粉色 (255 192 203)"
-    echo " 10) 浅绿 (144 238 144)"
-    echo " 11) 天蓝 (135 206 235)"
-    echo " 12) 金色 (255 215 0)"
-    echo " 13) 关闭 (0 0 0)"
-    echo " 14) 自定义RGB"
+    echo "  1) 红色 (255 0 0)" >&2
+    echo "  2) 绿色 (0 255 0)" >&2
+    echo "  3) 蓝色 (0 0 255)" >&2
+    echo "  4) 白色 (255 255 255)" >&2
+    echo "  5) 黄色 (255 255 0)" >&2
+    echo "  6) 青色 (0 255 255)" >&2
+    echo "  7) 紫色 (255 0 255)" >&2
+    echo "  8) 橙色 (255 165 0)" >&2
+    echo "  9) 粉色 (255 192 203)" >&2
+    echo " 10) 浅绿 (144 238 144)" >&2
+    echo " 11) 天蓝 (135 206 235)" >&2
+    echo " 12) 金色 (255 215 0)" >&2
+    echo " 13) 关闭 (0 0 0)" >&2
+    echo " 14) 自定义RGB" >&2
     
     while true; do
         read -p "请选择颜色 (1-14): " choice
@@ -179,7 +205,7 @@ select_color() {
             13) echo "0 0 0"; return ;;
             14)
                 # 自定义RGB
-                echo "请输入RGB值 (格式: R G B, 范围 0-255):"
+                echo "请输入RGB值 (格式: R G B, 范围 0-255):" >&2
                 read -p "红色值 (0-255): " r
                 read -p "绿色值 (0-255): " g
                 read -p "蓝色值 (0-255): " b
@@ -189,11 +215,11 @@ select_color() {
                     echo "$r $g $b"
                     return
                 else
-                    echo -e "${RED}无效的RGB值，请重试${NC}"
+                    echo -e "${RED}无效的RGB值，请重试${NC}" >&2
                 fi
                 ;;
             *)
-                echo -e "${RED}无效选择，请重试${NC}"
+                echo -e "${RED}无效选择，请重试${NC}" >&2
                 ;;
         esac
     done
