@@ -1116,14 +1116,22 @@ background_service_management() {
     
     # 检查服务状态
     local daemon_script="/opt/ugreen-led-controller/scripts/led_daemon.sh"
-    local service_status="未知"
+    local any_running=false
     
+    # 检查后台监控服务
     if [[ -f "/var/run/ugreen-led-monitor.pid" ]] && kill -0 "$(cat "/var/run/ugreen-led-monitor.pid")" 2>/dev/null; then
-        service_status="运行中"
-        echo -e "${GREEN}✓ 服务状态: 运行中 (PID: $(cat "/var/run/ugreen-led-monitor.pid"))${NC}"
+        echo -e "${GREEN}✓ 后台监控服务: 运行中 (PID: $(cat "/var/run/ugreen-led-monitor.pid"))${NC}"
+        any_running=true
     else
-        service_status="已停止"
-        echo -e "${RED}✗ 服务状态: 已停止${NC}"
+        echo -e "${RED}✗ 后台监控服务: 已停止${NC}"
+    fi
+    
+    # 检查定期状态更新
+    if [[ -f "/var/run/ugreen-led-periodic.pid" ]] && kill -0 "$(cat "/var/run/ugreen-led-periodic.pid")" 2>/dev/null; then
+        echo -e "${GREEN}✓ 定期状态更新: 运行中 (PID: $(cat "/var/run/ugreen-led-periodic.pid"))${NC}"
+        any_running=true
+    else
+        echo -e "${RED}✗ 定期状态更新: 已停止${NC}"
     fi
     
     # 检查systemd服务状态
@@ -1136,7 +1144,7 @@ background_service_management() {
     
     echo
     echo "管理选项:"
-    echo "1) 启动后台服务"
+    echo "1) 启动后台服务 (改进版)"
     echo "2) 停止后台服务"
     echo "3) 重启后台服务"
     echo "4) 查看服务状态"
@@ -1144,10 +1152,11 @@ background_service_management() {
     echo "6) 安装systemd服务 (开机自启)"
     echo "7) 卸载systemd服务"
     echo "8) 修复systemd服务配置"
+    echo "9) 启动定期状态更新 (基于智能硬盘状态显示)"
     echo "0) 返回主菜单"
     echo
     
-    read -p "请选择操作 (1-8/0): " service_choice
+    read -p "请选择操作 (1-9/0): " service_choice
     
     case $service_choice in
         1)
@@ -1173,45 +1182,39 @@ background_service_management() {
             
             echo -e "${CYAN}启动UGREEN LED监控服务 (扫描间隔: ${scan_interval}秒)...${NC}"
             
-            # 直接启动后台监控
+            # 基于智能硬盘状态显示的后台监控
             (
                 # 创建日志文件
                 local log_file="/var/log/ugreen-led-monitor.log"
                 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 启动UGREEN LED监控服务 (扫描间隔: ${scan_interval}秒)" >> "$log_file"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] 初始化监控环境..." >> "$log_file"
                 
+                # 初始化环境
+                if ! detect_system; then
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 系统检测失败，服务退出" >> "$log_file"
+                    exit 1
+                fi
+                
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] 系统检测成功 - LED数量: ${#AVAILABLE_LEDS[@]}, 硬盘数量: ${#DISKS[@]}" >> "$log_file"
+                
+                # 主监控循环
                 while true; do
-                    # 检测硬盘状态并更新LED
-                    if [[ -x "$UGREEN_LEDS_CLI" ]]; then
-                        # 获取硬盘列表
-                        local disks=($(lsblk -dn -o NAME | grep -E '^sd[a-z]$|^nvme[0-9]+n[0-9]+$' | head -4))
-                        
-                        for i in "${!disks[@]}"; do
-                            local disk="/dev/${disks[$i]}"
-                            local led_id="disk$((i+1))"
-                            
+                    # 重新检测硬盘状态（防止热插拔变化）
+                    if detect_disk_mapping_hctl || detect_disk_mapping_fallback; then
+                        # 更新所有硬盘的LED状态
+                        for disk in "${DISKS[@]}"; do
                             if [[ -b "$disk" ]]; then
-                                # 检查活动状态
-                                local iostat_output=$(iostat -d 1 2 "$disk" 2>/dev/null | tail -1)
-                                if [[ -n "$iostat_output" ]]; then
-                                    local read_kb=$(echo "$iostat_output" | awk '{print $3}')
-                                    local write_kb=$(echo "$iostat_output" | awk '{print $4}')
-                                    
-                                    if (( $(echo "$read_kb > 0.1 || $write_kb > 0.1" | bc -l 2>/dev/null || echo 0) )); then
-                                        # 活动状态：白色亮
-                                        "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 128 >/dev/null 2>&1
-                                    else
-                                        # 休眠状态：淡白色
-                                        "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 32 >/dev/null 2>&1
-                                    fi
-                                else
-                                    # 无法获取IO统计，默认休眠状态
-                                    "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 32 >/dev/null 2>&1
+                                local status=$(get_disk_status "$disk")
+                                set_disk_led "$disk" "$status" >/dev/null 2>&1
+                                
+                                # 记录状态变化（仅在调试模式）
+                                if [[ "$scan_interval" -eq 2 ]]; then
+                                    echo "[$(date '+%H:%M:%S')] $disk: $status" >> "$log_file"
                                 fi
-                            else
-                                # 离线状态：关闭
-                                "$UGREEN_LEDS_CLI" "$led_id" 0 0 0 0 >/dev/null 2>&1
                             fi
                         done
+                    else
+                        echo "[$(date '+%Y-%m-%d %H:%M:%S')] 硬盘检测失败，跳过本次更新" >> "$log_file"
                     fi
                     
                     sleep "$scan_interval"
@@ -1226,21 +1229,38 @@ background_service_management() {
             
         2)
             echo -e "${CYAN}停止后台服务...${NC}"
+            local stopped_any=false
+            
+            # 停止后台监控服务
             if [[ -f "/var/run/ugreen-led-monitor.pid" ]]; then
                 local pid=$(cat "/var/run/ugreen-led-monitor.pid")
                 if kill -0 "$pid" 2>/dev/null; then
                     kill "$pid"
                     rm -f "/var/run/ugreen-led-monitor.pid"
-                    echo -e "${GREEN}✓ 服务已停止${NC}"
-                    
-                    # 记录日志
-                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 服务已停止" >> "/var/log/ugreen-led-monitor.log"
+                    echo -e "${GREEN}✓ 后台监控服务已停止${NC}"
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 后台监控服务已停止" >> "/var/log/ugreen-led-monitor.log"
+                    stopped_any=true
                 else
-                    echo -e "${YELLOW}服务未运行${NC}"
                     rm -f "/var/run/ugreen-led-monitor.pid"
                 fi
-            else
-                echo -e "${YELLOW}服务未运行${NC}"
+            fi
+            
+            # 停止定期状态更新
+            if [[ -f "/var/run/ugreen-led-periodic.pid" ]]; then
+                local pid=$(cat "/var/run/ugreen-led-periodic.pid")
+                if kill -0 "$pid" 2>/dev/null; then
+                    kill "$pid"
+                    rm -f "/var/run/ugreen-led-periodic.pid"
+                    echo -e "${GREEN}✓ 定期状态更新已停止${NC}"
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 定期状态更新已停止" >> "/var/log/ugreen-led-periodic.log"
+                    stopped_any=true
+                else
+                    rm -f "/var/run/ugreen-led-periodic.pid"
+                fi
+            fi
+            
+            if [[ "$stopped_any" == false ]]; then
+                echo -e "${YELLOW}没有运行中的服务${NC}"
             fi
             ;;
             
@@ -1259,39 +1279,33 @@ background_service_management() {
             
             sleep 2
             
-            # 重新启动（使用标准30秒间隔）
+            # 重新启动（使用改进的监控逻辑）
             echo -e "${CYAN}重新启动服务...${NC}"
             (
                 local log_file="/var/log/ugreen-led-monitor.log"
                 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 重启UGREEN LED监控服务" >> "$log_file"
                 
+                # 初始化环境
+                if ! detect_system; then
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 系统检测失败，服务退出" >> "$log_file"
+                    exit 1
+                fi
+                
+                # 主监控循环
                 while true; do
-                    if [[ -x "$UGREEN_LEDS_CLI" ]]; then
-                        local disks=($(lsblk -dn -o NAME | grep -E '^sd[a-z]$|^nvme[0-9]+n[0-9]+$' | head -4))
-                        
-                        for i in "${!disks[@]}"; do
-                            local disk="/dev/${disks[$i]}"
-                            local led_id="disk$((i+1))"
-                            
+                    # 重新检测硬盘状态
+                    if detect_disk_mapping_hctl || detect_disk_mapping_fallback; then
+                        # 更新所有硬盘的LED状态
+                        for disk in "${DISKS[@]}"; do
                             if [[ -b "$disk" ]]; then
-                                local iostat_output=$(iostat -d 1 2 "$disk" 2>/dev/null | tail -1)
-                                if [[ -n "$iostat_output" ]]; then
-                                    local read_kb=$(echo "$iostat_output" | awk '{print $3}')
-                                    local write_kb=$(echo "$iostat_output" | awk '{print $4}')
-                                    
-                                    if (( $(echo "$read_kb > 0.1 || $write_kb > 0.1" | bc -l 2>/dev/null || echo 0) )); then
-                                        "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 128 >/dev/null 2>&1
-                                    else
-                                        "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 32 >/dev/null 2>&1
-                                    fi
-                                else
-                                    "$UGREEN_LEDS_CLI" "$led_id" 255 255 255 32 >/dev/null 2>&1
-                                fi
-                            else
-                                "$UGREEN_LEDS_CLI" "$led_id" 0 0 0 0 >/dev/null 2>&1
+                                local status=$(get_disk_status "$disk")
+                                set_disk_led "$disk" "$status" >/dev/null 2>&1
                             fi
                         done
+                    else
+                        echo "[$(date '+%Y-%m-%d %H:%M:%S')] 硬盘检测失败，跳过本次更新" >> "$log_file"
                     fi
+                    
                     sleep 30
                 done
             ) &
@@ -1602,6 +1616,68 @@ EOF
             else
                 echo -e "${YELLOW}取消修复操作${NC}"
             fi
+            ;;
+            
+        9)
+            echo -e "${CYAN}启动定期状态更新 (基于智能硬盘状态显示)...${NC}"
+            echo "此模式会定期调用智能硬盘状态显示功能来更新LED"
+            echo "优点: 稳定性高，功能完整"
+            echo "缺点: 比后台服务消耗稍多资源"
+            echo
+            
+            echo "选择扫描间隔:"
+            echo "1) 快速模式 (5秒)"
+            echo "2) 标准模式 (30秒) [推荐]"
+            echo "3) 节能模式 (60秒)"
+            read -p "请选择 (1-3, 默认2): " interval_choice
+            
+            local scan_interval
+            case "$interval_choice" in
+                1) scan_interval=5 ;;
+                3) scan_interval=60 ;;
+                *) scan_interval=30 ;;
+            esac
+            
+            # 检查是否已在运行
+            if [[ -f "/var/run/ugreen-led-periodic.pid" ]] && kill -0 "$(cat "/var/run/ugreen-led-periodic.pid")" 2>/dev/null; then
+                echo -e "${YELLOW}定期状态更新已在运行${NC}"
+                return 0
+            fi
+            
+            echo -e "${CYAN}启动定期状态更新 (间隔: ${scan_interval}秒)...${NC}"
+            
+            # 基于智能硬盘状态显示的定期更新
+            (
+                local log_file="/var/log/ugreen-led-periodic.log"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] 启动定期状态更新 (间隔: ${scan_interval}秒)" >> "$log_file"
+                
+                while true; do
+                    # 调用智能硬盘状态显示功能（静默模式）
+                    {
+                        # 初始化环境
+                        if detect_system; then
+                            # 更新所有硬盘的LED状态
+                            for disk in "${DISKS[@]}"; do
+                                if [[ -b "$disk" ]]; then
+                                    local status=$(get_disk_status "$disk")
+                                    set_disk_led "$disk" "$status"
+                                fi
+                            done
+                            echo "[$(date '+%H:%M:%S')] 更新LED状态: ${#DISKS[@]}个硬盘" >> "$log_file"
+                        else
+                            echo "[$(date '+%Y-%m-%d %H:%M:%S')] 系统检测失败" >> "$log_file"
+                        fi
+                    } >/dev/null 2>&1
+                    
+                    sleep "$scan_interval"
+                done
+            ) &
+            
+            local pid=$!
+            echo "$pid" > "/var/run/ugreen-led-periodic.pid"
+            echo -e "${GREEN}✓ 定期状态更新已启动 (PID: $pid)${NC}"
+            echo -e "${YELLOW}提示: 定期状态更新已在后台运行，退出SSH后仍会继续${NC}"
+            echo -e "${CYAN}查看日志: tail -f /var/log/ugreen-led-periodic.log${NC}"
             ;;
             
         0)
