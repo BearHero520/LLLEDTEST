@@ -38,7 +38,7 @@ echo "正在测试LED控制..."
 # 测试每个LED
 for led in disk1 disk3 disk4; do
     echo "测试 $led:"
-    /opt/ugreen-led-controller/ugreen_leds_cli $led -brightness 255 -color 0,255,0 -status on
+    /opt/ugreen-led-controller/ugreen_leds_cli $led -brightness 255 -color 0 255 0 -on
     echo "  设置 $led 为绿色亮起"
     sleep 1
 done
