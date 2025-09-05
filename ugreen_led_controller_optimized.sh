@@ -2,9 +2,9 @@
 
 # 绿联LED控制工具 - 优化版 (HCTL映射+智能检测)
 # 项目地址: https://github.com/BearHero520/LLLED
-# 版本: 2.0.5 (优化版 - 完全重构HCTL映射)
+# 版本: 2.0.6 (优化版 - 清理重复代码修复语法)
 
-VERSION="2.0.5"
+VERSION="2.0.6"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -165,12 +165,6 @@ detect_disk_mapping_hctl() {
     declare -gA DISK_HCTL_MAP
     
     local successful_mappings=0
-    
-    # 使用更兼容的方式处理HCTL信息
-    local temp_hctl="/tmp/hctl_info_$$"
-    echo "$hctl_info" > "$temp_hctl"
-        fi
-    done
     
     # 使用更兼容的方式处理HCTL信息
     local temp_hctl="/tmp/hctl_info_$$"
