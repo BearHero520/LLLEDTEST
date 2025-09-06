@@ -35,7 +35,16 @@ declare -A CURRENT_HCTL_MAP
 
 # 参数解析
 UPDATE_MAPPING=false
-SAVE_CONFIG=false
+SAVE_CON    echo -e "${GREEN}智能硬盘活动状态设置完成${NC}"
+    echo -e "${YELLOW}LED状态说明 (v3.0.0 基于hdparm状态):${NC}"
+    echo "  ⚪ 白色亮光 - 活跃/空闲状态 (active/idle) - 255,255,255"
+    echo "  ⚪ 白色微亮 - 待机状态 (standby) - 128,128,128"
+    echo "  ⚪ 微弱光点 - 深度睡眠 (sleeping) - 64,64,64"
+    echo "  ⚫ LED关闭 - 硬盘错误或离线状态"
+    echo -e "${CYAN}  💡 基于hdparm电源管理，精确反映硬盘状态${NC}"
+    echo
+    echo -e "${BLUE}检测到 ${#DISKS[@]} 个硬盘，成功映射到 ${#DISK_LEDS[@]} 个LED槽位${NC}"
+    echo -e "${GREEN}✓ 所有硬盘LED状态已根据当前状态重新设置${NC}"
 INTERACTIVE_MODE=false
 
 # 解析命令行参数
@@ -485,30 +494,62 @@ check_disk_activity() {
     fi
 }
 
-# 检测硬盘是否休眠
+# 检测硬盘是否休眠 (使用hdparm)
 check_disk_sleep() {
     local device="$1"
     
-    # 移除/dev/前缀
-    device=$(basename "$device")
+    # 移除/dev/前缀，确保设备路径正确
+    local device_path="/dev/$(basename "$device")"
     
-    # 方法1: 使用smartctl检查电源状态
+    # 方法1: 使用hdparm检查电源状态 (最准确)
+    if command -v hdparm >/dev/null 2>&1; then
+        local hdparm_output=$(hdparm -C "$device_path" 2>/dev/null)
+        if [[ $? -eq 0 ]]; then
+            # 解析hdparm输出
+            if [[ "$hdparm_output" =~ drive\ state\ is:[[:space:]]*([^[:space:]]+) ]]; then
+                local drive_state="${BASH_REMATCH[1]}"
+                case "$drive_state" in
+                    "active/idle"|"active"|"idle")
+                        echo "AWAKE"
+                        return
+                        ;;
+                    "standby")
+                        echo "STANDBY"
+                        return
+                        ;;
+                    "sleeping")
+                        echo "SLEEPING"
+                        return
+                        ;;
+                    "unknown")
+                        echo "UNKNOWN"
+                        return
+                        ;;
+                    *)
+                        echo "UNKNOWN"
+                        return
+                        ;;
+                esac
+            fi
+        fi
+    fi
+    
+    # 方法2: 使用smartctl作为备用检查 (如果hdparm失败)
     if command -v smartctl >/dev/null 2>&1; then
-        local power_mode=$(smartctl -i -n standby "/dev/$device" 2>/dev/null | grep -i "power mode" | awk '{print $NF}')
+        local power_mode=$(smartctl -i -n standby "$device_path" 2>/dev/null | grep -i "power mode" | awk '{print $NF}')
         case "${power_mode^^}" in
-            "STANDBY"|"SLEEP"|"IDLE")
-                echo "SLEEPING"
+            "STANDBY"|"SLEEP")
+                echo "STANDBY"
+                return
+                ;;
+            "ACTIVE"|"IDLE")
+                echo "AWAKE"
                 return
                 ;;
         esac
     fi
     
-    # 方法2: 检查设备是否响应
-    if ! smartctl -i "/dev/$device" >/dev/null 2>&1; then
-        echo "SLEEPING"
-        return
-    fi
-    
+    # 默认假设设备清醒
     echo "AWAKE"
 }
 
@@ -524,23 +565,44 @@ set_disk_led_by_activity() {
     
     echo -e "${BLUE}检查硬盘 $device -> $led_name${NC}"
     
-    # 检查休眠状态
+    # 检查休眠状态 (使用hdparm)
     local sleep_status=$(check_disk_sleep "$device")
-    echo "  休眠状态: $sleep_status"
+    echo "  电源状态: $sleep_status"
     
-    if [[ "$sleep_status" == "SLEEPING" ]]; then
-        # 休眠状态 - 淡白色
-        if [[ -n "$DISK_COLOR_STANDBY" ]]; then
-            "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_STANDBY -on -brightness ${LOW_BRIGHTNESS:-16}
-        else
-            # 备用方案：直接使用数字
-            "$UGREEN_CLI" "$led_name" -color 128 128 128 -on -brightness 16
-        fi
-        echo "  -> 休眠状态: 淡白色"
-        return
-    fi
+    # 根据hdparm状态设置LED
+    case "$sleep_status" in
+        "STANDBY")
+            # 待机状态 - 淡白色 (主轴停转，但可快速唤醒)
+            if [[ -n "$DISK_COLOR_STANDBY" ]]; then
+                "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_STANDBY -on -brightness ${LOW_BRIGHTNESS:-16}
+            else
+                "$UGREEN_CLI" "$led_name" -color 128 128 128 -on -brightness 16
+            fi
+            echo "  -> 待机状态: 淡白色 (快速唤醒)"
+            return
+            ;;
+        "SLEEPING")
+            # 深度睡眠 - 非常淡的白色或关闭
+            "$UGREEN_CLI" "$led_name" -color 64 64 64 -on -brightness 8
+            echo "  -> 深度睡眠: 微光 (慢速唤醒)"
+            return
+            ;;
+        "UNKNOWN")
+            # 状态未知 - 默认淡白色
+            if [[ -n "$DISK_COLOR_STANDBY" ]]; then
+                "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_STANDBY -on -brightness ${LOW_BRIGHTNESS:-16}
+            else
+                "$UGREEN_CLI" "$led_name" -color 128 128 128 -on -brightness 16
+            fi
+            echo "  -> 状态未知: 默认淡白色"
+            return
+            ;;
+        "AWAKE")
+            # 继续检查活动状态
+            ;;
+    esac
     
-    # 检查活动状态
+    # 硬盘清醒，检查活动状态
     local activity=$(check_disk_activity "$device")
     echo "  活动状态: $activity"
     
