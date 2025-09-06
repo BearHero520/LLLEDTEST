@@ -19,7 +19,7 @@ INSTALL_DIR="/opt/ugreen-led-controller"
 LOG_DIR="/var/log/llled"
 
 # 全局版本号
-LLLED_VERSION="3.0.4"
+LLLED_VERSION="3.0.5"
 
 # 支持的UGREEN设备列表
 SUPPORTED_MODELS=(
