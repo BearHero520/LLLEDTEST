@@ -754,6 +754,36 @@ main() {
         echo
     done
     
+    # 关闭未使用的LED（没有映射到硬盘的LED位置）
+    echo -e "${CYAN}=== 关闭未使用的LED ===${NC}"
+    local used_leds=()
+    
+    # 收集已使用的LED
+    for disk in "${!DISK_LED_MAP[@]}"; do
+        used_leds+=("${DISK_LED_MAP[$disk]}")
+    done
+    
+    # 检查每个可用LED，如果没有被使用则关闭
+    for led in "${DISK_LEDS[@]}"; do
+        local led_in_use=false
+        for used_led in "${used_leds[@]}"; do
+            if [[ "$led" == "$used_led" ]]; then
+                led_in_use=true
+                break
+            fi
+        done
+        
+        if [[ "$led_in_use" == "false" ]]; then
+            echo -e "${YELLOW}关闭未使用的LED: $led${NC}"
+            "$UGREEN_CLI" "$led" -off >/dev/null 2>&1
+            if [[ $? -eq 0 ]]; then
+                echo -e "${GREEN}✓ $led LED已关闭${NC}"
+            else
+                echo -e "${RED}✗ $led LED关闭失败${NC}"
+            fi
+        fi
+    done
+    
     echo -e "${GREEN}智能硬盘活动状态设置完成${NC}"
     echo -e "${YELLOW}LED状态说明 (v3.0.0新配色):${NC}"
     echo "  ⚪ 白色亮光 - 硬盘活动状态 (255,255,255)"
