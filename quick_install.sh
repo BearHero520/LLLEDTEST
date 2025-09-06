@@ -19,7 +19,7 @@ INSTALL_DIR="/opt/ugreen-led-controller"
 LOG_DIR="/var/log/llled"
 
 # 全局版本号
-LLLED_VERSION="3.0.6"
+LLLED_VERSION="3.0.8"
 
 # 支持的UGREEN设备列表
 SUPPORTED_MODELS=(
@@ -268,6 +268,14 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     log_install "SUCCESS: 手动创建Systemd服务成功"
+fi
+
+# 启用开机自启
+log_install "启用开机自启..."
+if systemctl enable ugreen-led-monitor.service; then
+    log_install "SUCCESS: 开机自启已启用"
+else
+    log_install "WARNING: 启用开机自启失败"
 fi
 
 log_install "LLLED v$LLLED_VERSION 安装完成！"

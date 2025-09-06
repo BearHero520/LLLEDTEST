@@ -696,11 +696,7 @@ show_help() {
 # 主程序入口
 case "${1:-start}" in
     start)
-        start_daemon true  # 后台模式启动
-        ;;
-    _daemon_process)
-        # 内部调用：直接启动守护进程
-        _start_daemon_direct
+        start_daemon
         ;;
     stop)
         stop_daemon

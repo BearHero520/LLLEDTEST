@@ -492,7 +492,18 @@ manage_service() {
             fi
             echo
             echo -e "${BLUE}Systemd服务状态:${NC}"
-            systemctl status ugreen-led-monitor 2>/dev/null || echo "Systemd服务未安装"
+            if systemctl status ugreen-led-monitor >/dev/null 2>&1; then
+                systemctl status ugreen-led-monitor --no-pager -l
+                echo
+                echo -e "${BLUE}开机自启状态:${NC}"
+                if systemctl is-enabled ugreen-led-monitor >/dev/null 2>&1; then
+                    echo -e "${GREEN}✓ 已启用开机自启${NC}"
+                else
+                    echo -e "${YELLOW}⚠ 未启用开机自启${NC}"
+                fi
+            else
+                echo "Systemd服务未安装"
+            fi
             ;;
         5)
             manage_autostart
@@ -579,6 +590,12 @@ install_systemd_service() {
     
     local service_file="/etc/systemd/system/ugreen-led-monitor.service"
     
+    # 如果服务正在运行，先停止
+    if systemctl is-active ugreen-led-monitor >/dev/null 2>&1; then
+        echo -e "${YELLOW}停止现有服务...${NC}"
+        systemctl stop ugreen-led-monitor
+    fi
+    
     cat > "$service_file" << EOF
 [Unit]
 Description=LLLED智能LED监控服务
@@ -604,12 +621,48 @@ EOF
     
     echo -e "${GREEN}✓ Systemd服务已安装${NC}"
     echo -e "${BLUE}服务文件: $service_file${NC}"
+    
+    # 启用开机自启 - 这是关键步骤！
+    echo -e "${CYAN}启用开机自启...${NC}"
+    if systemctl enable ugreen-led-monitor 2>/dev/null; then
+        echo -e "${GREEN}✓ 开机自启已启用 - 重启后服务将自动启动${NC}"
+    else
+        echo -e "${RED}✗ 启用开机自启失败${NC}"
+        return 1
+    fi
+    
+    # 立即启动服务
+    echo -e "${CYAN}启动服务...${NC}"
+    if systemctl start ugreen-led-monitor 2>/dev/null; then
+        echo -e "${GREEN}✓ 服务已启动${NC}"
+    else
+        echo -e "${YELLOW}服务启动失败，可能需要手动启动${NC}"
+    fi
+    
+    # 验证安装结果
     echo
-    echo "现在可以使用以下命令管理服务:"
+    echo -e "${CYAN}安装结果验证:${NC}"
+    if systemctl is-enabled ugreen-led-monitor >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ 开机自启: 已启用${NC}"
+    else
+        echo -e "${RED}✗ 开机自启: 未启用${NC}"
+    fi
+    
+    if systemctl is-active ugreen-led-monitor >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ 服务状态: 运行中${NC}"
+    else
+        echo -e "${YELLOW}⚠ 服务状态: 未运行${NC}"
+    fi
+    
+    echo
+    echo -e "${BLUE}服务管理命令:${NC}"
     echo "  systemctl start ugreen-led-monitor    # 启动服务"
     echo "  systemctl stop ugreen-led-monitor     # 停止服务"
-    echo "  systemctl enable ugreen-led-monitor   # 开机自启"
+    echo "  systemctl restart ugreen-led-monitor  # 重启服务"
     echo "  systemctl status ugreen-led-monitor   # 查看状态"
+    echo "  systemctl disable ugreen-led-monitor  # 禁用自启"
+    echo
+    echo -e "${GREEN}✓ 安装完成！重启系统后服务将自动启动${NC}"
 }
 
 # 恢复系统LED
