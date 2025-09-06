@@ -670,24 +670,36 @@ start_daemon() {
 
 # 直接启动守护进程（不fork）
 _start_daemon_direct() {
+    log_message "INFO" "=== _start_daemon_direct 函数开始执行 ==="
+    
     # 写入PID文件
     echo $$ > "$PID_FILE"
+    log_message "INFO" "已写入PID文件: $PID_FILE, PID: $$"
     
     # 设置信号处理
     trap 'handle_signal TERM' TERM
     trap 'handle_signal INT' INT
     trap 'handle_signal QUIT' QUIT
+    log_message "INFO" "已设置信号处理"
     
     # 基础环境检查
+    log_message "INFO" "开始基础环境检查..."
     check_root
-    load_configs
+    log_message "INFO" "root权限检查通过"
     
+    load_configs
+    log_message "INFO" "配置文件加载完成"
+    
+    log_message "INFO" "开始LED控制程序检查..."
     if ! check_led_cli; then
         log_message "ERROR" "LED控制程序检查失败，服务无法启动"
         exit 1
     fi
+    log_message "INFO" "LED控制程序检查通过"
     
+    log_message "INFO" "开始检测可用LED..."
     detect_available_leds
+    log_message "INFO" "LED检测完成，发现 ${#AVAILABLE_LEDS[@]} 个LED"
     
     # 启动时清理所有硬盘LED状态，确保干净的初始状态
     log_message "INFO" "【初始化】清理所有硬盘LED状态"
