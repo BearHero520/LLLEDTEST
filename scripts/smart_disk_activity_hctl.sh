@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# 智能硬盘活动状态显示脚本 - HCTL版本 v3.0.0
-# 根据硬盘活动状态、休眠状态显示不同亮度和效果
+# 智能硬盘状态设置脚本 - HCTL版本 v3.0.0
+# 根据硬盘活动状态、休眠状态自动设置LED颜色和亮度
 # 支持HCTL智能映射、自动更新和多盘位
-# 新增: 自动保存HCTL映射到配置文件
+# v3.0.0: 采用白色系配色方案，支持自动保存HCTL映射到配置文件
 
 # 颜色定义
 RED='\033[0;31m'
@@ -675,9 +675,9 @@ set_disk_led_by_activity() {
     echo "  休眠状态: $sleep_status"
     
     if [[ "$sleep_status" == "SLEEPING" ]]; then
-        # 休眠状态 - 微亮白光
-        "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness ${LOW_BRIGHTNESS:-16}
-        echo "  -> 休眠状态: 微亮白光"
+        # 休眠状态 - 淡白色
+        "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_STANDBY -on -brightness ${LOW_BRIGHTNESS:-16}
+        echo "  -> 休眠状态: 淡白色"
         return
     fi
     
@@ -703,53 +703,55 @@ set_disk_led_by_activity() {
         "GOOD")
             case "$activity" in
                 "ACTIVE")
-                    # 活动且健康 - 绿色高亮
-                    "$UGREEN_CLI" "$led_name" -color 0 255 0 -on -brightness ${HIGH_BRIGHTNESS:-128}
-                    echo "  -> 活动健康: 绿色高亮"
+                    # 活动且健康 - 白色高亮
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ACTIVE -on -brightness ${HIGH_BRIGHTNESS:-128}
+                    echo "  -> 活动健康: 白色高亮"
                     ;;
                 "IDLE")
-                    # 空闲且健康 - 绿色微亮
-                    "$UGREEN_CLI" "$led_name" -color 0 255 0 -on -brightness ${DEFAULT_BRIGHTNESS:-64}
-                    echo "  -> 空闲健康: 绿色微亮"
+                    # 空闲且健康 - 白色默认亮度
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ACTIVE -on -brightness ${DEFAULT_BRIGHTNESS:-64}
+                    echo "  -> 空闲健康: 白色默认"
                     ;;
                 *)
-                    # 状态未知 - 绿色默认亮度
-                    "$UGREEN_CLI" "$led_name" -color 0 255 0 -on -brightness ${DEFAULT_BRIGHTNESS:-64}
-                    echo "  -> 状态未知但健康: 绿色默认"
+                    # 状态未知 - 白色默认亮度
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ACTIVE -on -brightness ${DEFAULT_BRIGHTNESS:-64}
+                    echo "  -> 状态未知但健康: 白色默认"
                     ;;
             esac
             ;;
         "BAD")
             case "$activity" in
                 "ACTIVE")
-                    # 活动但异常 - 红色闪烁
-                    for i in {1..3}; do
-                        "$UGREEN_CLI" "$led_name" -color 255 0 0 -on -brightness ${HIGH_BRIGHTNESS:-128}
-                        sleep 0.3
-                        "$UGREEN_CLI" "$led_name" -off
-                        sleep 0.3
-                    done
-                    "$UGREEN_CLI" "$led_name" -color 255 0 0 -on -brightness ${HIGH_BRIGHTNESS:-128}
-                    echo "  -> 活动异常: 红色闪烁"
+                    # 活动但异常 - 关闭LED (新配色方案)
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ERROR -off
+                    echo "  -> 活动异常: LED关闭"
                     ;;
                 *)
-                    # 空闲但异常 - 红色常亮
-                    "$UGREEN_CLI" "$led_name" -color 255 0 0 -on -brightness ${DEFAULT_BRIGHTNESS:-64}
-                    echo "  -> 空闲异常: 红色常亮"
+                    # 空闲但异常 - 关闭LED (新配色方案)
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ERROR -off
+                    echo "  -> 空闲异常: LED关闭"
                     ;;
             esac
             ;;
         *)
-            # 状态未知 - 黄色
-            "$UGREEN_CLI" "$led_name" -color 255 255 0 -on -brightness ${DEFAULT_BRIGHTNESS:-64}
-            echo "  -> 状态未知: 黄色"
+            # 状态未知 - 关闭LED (新配色方案)
+            "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ERROR -off
+            echo "  -> 状态未知: LED关闭"
             ;;
     esac
 }
 
 # 主函数
 main() {
-    echo -e "${CYAN}开始智能硬盘活动监控 (HCTL版)...${NC}"
+    echo -e "${CYAN}================================${NC}"
+    echo -e "${CYAN}智能硬盘活动状态监控 v${SCRIPT_VERSION}${NC}"
+    echo -e "${CYAN}HCTL映射版本${NC}"
+    echo -e "${CYAN}================================${NC}"
+    echo -e "${YELLOW}更新时间: ${LAST_UPDATE}${NC}"
+    echo -e "${YELLOW}配置目录: ${CONFIG_DIR}${NC}"
+    echo
+    
+    echo -e "${CYAN}开始智能硬盘状态设置 (HCTL版)...${NC}"
     
     # 检测LED控制程序
     if [[ ! -x "$UGREEN_CLI" ]]; then
@@ -787,15 +789,14 @@ main() {
     done
     
     echo -e "${GREEN}智能硬盘活动状态设置完成${NC}"
-    echo -e "${YELLOW}LED状态说明:${NC}"
-    echo "  🟢 绿色高亮 - 硬盘活动且健康"
-    echo "  🟢 绿色微亮 - 硬盘空闲且健康" 
-    echo "  ⚪ 白色微亮 - 硬盘休眠"
-    echo "  🔴 红色闪烁 - 硬盘活动但异常"
-    echo "  🔴 红色常亮 - 硬盘空闲但异常"
-    echo "  🟡 黄色 - 硬盘状态未知"
+    echo -e "${YELLOW}LED状态说明 (v3.0.0新配色):${NC}"
+    echo "  ⚪ 白色亮光 - 硬盘活动状态 (255,255,255)"
+    echo "  ⚪ 白色微亮 - 硬盘休眠状态 (128,128,128)" 
+    echo "  ⚫ LED关闭 - 硬盘错误或未知状态"
+    echo "  � 简洁的白色系配色，避免视觉干扰"
     echo
-    echo -e "${BLUE}检测到 ${#DISKS[@]} 个硬盘，支持最多 ${#DISK_LEDS[@]} 个LED槽位${NC}"
+    echo -e "${BLUE}检测到 ${#DISKS[@]} 个硬盘，成功映射到 ${#DISK_LEDS[@]} 个LED槽位${NC}"
+    echo -e "${GREEN}✓ 所有硬盘LED状态已根据当前状态重新设置${NC}"
 }
 
 # 运行主函数

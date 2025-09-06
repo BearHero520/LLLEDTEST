@@ -264,7 +264,7 @@ custom_color_setting() {
 manage_disks() {
     echo -e "${CYAN}硬盘设置${NC}"
     echo
-    echo "1. 智能硬盘状态显示"
+    echo "1. 设置智能硬盘状态"
     echo "2. 实时硬盘活动监控"
     echo "3. 获取HCTL硬盘映射"
     echo "4. 显示硬盘映射"
@@ -276,9 +276,9 @@ manage_disks() {
     
     case $choice in
         1)
-            echo -e "${CYAN}启动智能硬盘状态显示...${NC}"
-            echo -e "${BLUE}智能硬盘活动状态监控 (HCTL版)${NC}"
-            echo -e "${CYAN}正在使用HCTL智能检测硬盘...${NC}"
+            echo -e "${CYAN}设置智能硬盘状态...${NC}"
+            echo -e "${BLUE}智能硬盘活动状态设置 (HCTL版)${NC}"
+            echo -e "${CYAN}正在使用HCTL智能检测并设置硬盘LED状态...${NC}"
             if [[ -x "$HCTL_SCRIPT" ]]; then
                 "$HCTL_SCRIPT"
             else
@@ -862,7 +862,7 @@ show_menu() {
     echo "=================================="
     echo "1) 关闭所有LED"
     echo "2) 打开所有LED"
-    echo "3) 智能硬盘状态显示"
+    echo "3) 设置智能硬盘状态"
     echo "4) 实时硬盘活动监控"
     echo "5) 彩虹效果"
     echo "6) 节能模式"
@@ -913,7 +913,7 @@ case "${1:-menu}" in
         echo "用法: LLLED [选项]"
         echo "  --off          关闭所有LED"
         echo "  --on           打开所有LED"
-        echo "  --disk-status  智能硬盘状态显示"
+        echo "  --disk-status  设置智能硬盘状态"
         echo "  --monitor      实时硬盘活动监控"
         echo "  --system       恢复系统LED (电源+网络)"
         echo "  --version      显示版本信息"
