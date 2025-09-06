@@ -112,10 +112,14 @@ check_led_cli() {
         return 1
     fi
     
-    # 测试LED控制程序
-    if ! "$UGREEN_CLI" all -status >/dev/null 2>&1; then
-        log_message "WARN" "LED控制程序测试失败，可能设备不兼容"
-        return 1
+    # 测试LED控制程序 - 使用disk1进行测试，因为all可能不被支持
+    if ! "$UGREEN_CLI" disk1 -status >/dev/null 2>&1; then
+        log_message "WARN" "LED控制程序测试失败，尝试使用power LED测试..."
+        # 如果disk1失败，尝试power LED
+        if ! "$UGREEN_CLI" power -status >/dev/null 2>&1; then
+            log_message "ERROR" "LED控制程序测试完全失败，可能设备不兼容"
+            return 1
+        fi
     fi
     
     log_message "INFO" "LED控制程序检查通过"
@@ -575,15 +579,26 @@ main_loop() {
     while [[ "$DAEMON_RUNNING" == "true" ]]; do
         local current_time=$(date +%s)
         
+        log_message "DEBUG" "循环迭代开始，时间: $(date)"
+        
         # 核心步骤：严格基于当前HCTL配置更新硬盘LED状态
         # 只检查配置中的硬盘，不扫描新硬盘
-        update_disk_leds
+        if ! update_disk_leds; then
+            log_message "WARN" "硬盘LED更新失败，继续运行"
+        fi
         
         # 定期更新系统LED状态（电源和网络）
         if [[ $((current_time - last_system_led_update)) -gt $system_led_interval ]]; then
             log_message "DEBUG" "更新系统LED状态..."
-            update_power_led
-            update_network_led
+            
+            if ! update_power_led; then
+                log_message "WARN" "电源LED更新失败"
+            fi
+            
+            if ! update_network_led; then
+                log_message "WARN" "网络LED更新失败"
+            fi
+            
             last_system_led_update=$current_time
         fi
         
@@ -693,8 +708,8 @@ _start_daemon_direct() {
     # 第一步：生成HCTL配置建立硬盘-LED映射关系
     log_message "INFO" "【第一步】生成HCTL配置建立硬盘-LED映射关系"
     if ! refresh_hctl_mapping; then
-        log_message "ERROR" "HCTL映射生成失败，服务无法启动"
-        exit 1
+        log_message "WARN" "HCTL映射生成失败，继续运行仅监控系统LED"
+        # 即使HCTL映射失败，也继续运行守护进程，至少可以监控系统LED
     fi
     
     # 验证第一步结果
@@ -716,9 +731,19 @@ _start_daemon_direct() {
     
     # 第三步：开始持续监控循环
     log_message "INFO" "【第三步】开始基于HCTL配置的持续监控循环"
+    log_message "INFO" "守护进程初始化完成，进入主循环监控模式"
+    log_message "INFO" "当前环境状态:"
+    log_message "INFO" "  - DAEMON_RUNNING: $DAEMON_RUNNING"
+    log_message "INFO" "  - CHECK_INTERVAL: $CHECK_INTERVAL"
+    log_message "INFO" "  - 硬盘映射数量: ${#DISK_LED_MAP[@]}"
+    log_message "INFO" "  - 可用LED数量: ${#AVAILABLE_LEDS[@]}"
     
     # 启动主循环
     main_loop
+    
+    # 如果主循环意外退出，记录日志
+    log_message "WARN" "主循环意外退出！"
+    log_message "INFO" "DAEMON_RUNNING状态: $DAEMON_RUNNING"
 }
 
 # 服务状态检查
