@@ -117,16 +117,21 @@ detect_available_leds() {
 
 # 加载配置
 load_config() {
+    # 设置默认值
+    DEFAULT_BRIGHTNESS=64
+    LOW_BRIGHTNESS=16
+    HIGH_BRIGHTNESS=128
+    DISK_COLOR_ACTIVE="255 255 255"    # 硬盘活动 - 白色
+    DISK_COLOR_STANDBY="128 128 128"   # 硬盘休眠 - 淡白色
+    DISK_COLOR_ERROR="0 0 0"           # 硬盘错误 - 不显示
+    
+    # 尝试加载配置文件
     if [[ -f "$LED_CONFIG" ]]; then
         source "$LED_CONFIG" 2>/dev/null || {
-            echo -e "${YELLOW}使用默认LED配置${NC}"
-            DEFAULT_BRIGHTNESS=64
-            LOW_BRIGHTNESS=16
-            HIGH_BRIGHTNESS=128
-            DISK_COLOR_ACTIVE="255 255 255"    # 硬盘活动 - 白色
-            DISK_COLOR_STANDBY="128 128 128"   # 硬盘休眠 - 淡白色
-            DISK_COLOR_ERROR="0 0 0"           # 硬盘错误 - 不显示
+            echo -e "${YELLOW}配置文件加载失败，使用默认LED配置${NC}"
         }
+    else
+        echo -e "${YELLOW}配置文件不存在，使用默认LED配置${NC}"
     fi
 }
 
@@ -525,7 +530,12 @@ set_disk_led_by_activity() {
     
     if [[ "$sleep_status" == "SLEEPING" ]]; then
         # 休眠状态 - 淡白色
-        "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_STANDBY -on -brightness ${LOW_BRIGHTNESS:-16}
+        if [[ -n "$DISK_COLOR_STANDBY" ]]; then
+            "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_STANDBY -on -brightness ${LOW_BRIGHTNESS:-16}
+        else
+            # 备用方案：直接使用数字
+            "$UGREEN_CLI" "$led_name" -color 128 128 128 -on -brightness 16
+        fi
         echo "  -> 休眠状态: 淡白色"
         return
     fi
@@ -553,7 +563,11 @@ set_disk_led_by_activity() {
             case "$activity" in
                 "ACTIVE")
                     # 活动且健康 - 白色高亮
-                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ACTIVE -on -brightness ${HIGH_BRIGHTNESS:-128}
+                    if [[ -n "$DISK_COLOR_ACTIVE" ]]; then
+                        "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ACTIVE -on -brightness ${HIGH_BRIGHTNESS:-128}
+                    else
+                        "$UGREEN_CLI" "$led_name" -color 255 255 255 -on -brightness 128
+                    fi
                     echo "  -> 活动健康: 白色高亮"
                     ;;
                 "IDLE")
@@ -598,6 +612,16 @@ main() {
     echo -e "${CYAN}================================${NC}"
     echo -e "${YELLOW}更新时间: ${LAST_UPDATE}${NC}"
     echo -e "${YELLOW}配置目录: ${CONFIG_DIR}${NC}"
+    echo
+    
+    # 加载配置文件
+    load_config
+    
+    # 调试：显示颜色配置
+    echo -e "${YELLOW}LED颜色配置:${NC}"
+    echo "  活动状态: $DISK_COLOR_ACTIVE"
+    echo "  休眠状态: $DISK_COLOR_STANDBY"
+    echo "  错误状态: $DISK_COLOR_ERROR"
     echo
     
     echo -e "${CYAN}开始智能硬盘状态设置 (HCTL版)...${NC}"
