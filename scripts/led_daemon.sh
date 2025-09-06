@@ -399,7 +399,7 @@ set_led_status() {
             return 1
         fi
     else
-        if "$UGREEN_CLI" "$led" -color "$color" -brightness "$brightness" -on >/dev/null 2>&1; then
+        if "$UGREEN_CLI" "$led" -color $color -brightness "$brightness" -on >/dev/null 2>&1; then
             LED_STATUS_CACHE["$led"]="$color|$brightness"
             log_message "DEBUG" "LED $led 设置为 $color (亮度: $brightness)"
         else

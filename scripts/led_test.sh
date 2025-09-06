@@ -70,13 +70,13 @@ case "$ACTION" in
             echo -e "${RED}未检测到任何LED，使用备用方法${NC}"
             # 备用方法：尝试常见的LED
             for led in power netdev disk1 disk2 disk3 disk4 disk5 disk6 disk7 disk8; do
-                $UGREEN_LEDS_CLI "$led" -color 255 255 255 -on -brightness 64 2>/dev/null
+                $UGREEN_LEDS_CLI "$led" -color 255 255 255 -brightness 64 -on 2>/dev/null
             done
         else
             echo -e "${GREEN}检测到 ${#AVAILABLE_LEDS[@]} 个LED: ${AVAILABLE_LEDS[*]}${NC}"
             for led in "${AVAILABLE_LEDS[@]}"; do
                 echo "开启 $led..."
-                $UGREEN_LEDS_CLI "$led" -color 255 255 255 -on -brightness 64 2>/dev/null
+                $UGREEN_LEDS_CLI "$led" -color 255 255 255 -brightness 64 -on 2>/dev/null
             done
         fi
         echo -e "${GREEN}✓ 所有LED已打开${NC}"

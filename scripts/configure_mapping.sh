@@ -106,7 +106,7 @@ for disk in "${DISKS[@]}"; do
                 for led in "${DISK_LEDS[@]}"; do
                     echo "点亮 $led (3秒)..."
                     $UGREEN_LEDS_CLI all -off
-                    $UGREEN_LEDS_CLI "$led" -color 255 0 0 -on -brightness 255
+                    $UGREEN_LEDS_CLI "$led" -color 255 0 0 -brightness 255 -on
                     sleep 3
                 done
                 $UGREEN_LEDS_CLI all -off
@@ -140,7 +140,7 @@ for disk in "${DISKS[@]}"; do
                         # 测试映射
                         echo "测试映射 (3秒)..."
                         $UGREEN_LEDS_CLI all -off
-                        $UGREEN_LEDS_CLI "$selected_led" -color 0 255 0 -on -brightness 255
+                        $UGREEN_LEDS_CLI "$selected_led" -color 0 255 0 -brightness 255 -on
                         sleep 3
                         $UGREEN_LEDS_CLI all -off
                         break

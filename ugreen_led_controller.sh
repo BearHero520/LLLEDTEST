@@ -693,7 +693,7 @@ restore_system_leds() {
     case $choice in
         1)
             echo -e "${CYAN}恢复电源LED...${NC}"
-            if "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on; then
+            if "$UGREEN_CLI" power -color 128 128 128 -brightness 64 -on; then
                 echo -e "${GREEN}✓ 电源LED已恢复 (淡白色)${NC}"
             else
                 echo -e "${RED}✗ 电源LED恢复失败${NC}"
@@ -702,7 +702,7 @@ restore_system_leds() {
             ;;
         2)
             echo -e "${CYAN}恢复网络LED...${NC}"
-            if "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on; then
+            if "$UGREEN_CLI" netdev -color 0 0 255 -brightness 64 -on; then
                 echo -e "${GREEN}✓ 网络LED已恢复 (蓝色)${NC}"
             else
                 echo -e "${RED}✗ 网络LED恢复失败${NC}"
@@ -715,7 +715,7 @@ restore_system_leds() {
             local netdev_result=0
             
             echo -e "${BLUE}  正在恢复电源LED...${NC}"
-            if "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on; then
+            if "$UGREEN_CLI" power -color 128 128 128 -brightness 64 -on; then
                 echo -e "${GREEN}  ✓ 电源LED恢复成功${NC}"
             else
                 echo -e "${RED}  ✗ 电源LED恢复失败${NC}"
@@ -723,7 +723,7 @@ restore_system_leds() {
             fi
             
             echo -e "${BLUE}  正在恢复网络LED...${NC}"
-            if "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on; then
+            if "$UGREEN_CLI" netdev -color 0 0 255 -brightness 64 -on; then
                 echo -e "${GREEN}  ✓ 网络LED恢复成功${NC}"
             else
                 echo -e "${RED}  ✗ 网络LED恢复失败${NC}"
@@ -746,7 +746,7 @@ restore_system_leds() {
             if "$UGREEN_CLI" power -off; then
                 echo -e "${GREEN}  ✓ 电源LED关闭成功${NC}"
                 sleep 1
-                if "$UGREEN_CLI" power -color "255 255 255" -brightness 64 -on; then
+                if "$UGREEN_CLI" power -color 255 255 255 -brightness 64 -on; then
                     echo -e "${GREEN}  ✓ 电源LED点亮成功${NC}"
                 else
                     echo -e "${RED}  ✗ 电源LED点亮失败${NC}"
@@ -761,7 +761,7 @@ restore_system_leds() {
             if "$UGREEN_CLI" netdev -off; then
                 echo -e "${GREEN}  ✓ 网络LED关闭成功${NC}"
                 sleep 1
-                if "$UGREEN_CLI" netdev -color "0 255 0" -brightness 64 -on; then
+                if "$UGREEN_CLI" netdev -color 0 255 0 -brightness 64 -on; then
                     echo -e "${GREEN}  ✓ 网络LED点亮成功${NC}"
                 else
                     echo -e "${RED}  ✗ 网络LED点亮失败${NC}"
@@ -934,13 +934,13 @@ set_disk_led() {
     if [[ -n "$led_name" ]]; then
         case "$status" in
             "active")
-                $UGREEN_LEDS_CLI "$led_name" -color 0 255 0 -on -brightness 255
+                $UGREEN_LEDS_CLI "$led_name" -color 0 255 0 -brightness 255 -on
                 ;;
             "idle")
-                $UGREEN_LEDS_CLI "$led_name" -color 255 255 0 -on -brightness 64
+                $UGREEN_LEDS_CLI "$led_name" -color 255 255 0 -brightness 64 -on
                 ;;
             "error")
-                $UGREEN_LEDS_CLI "$led_name" -color 255 0 0 -blink 500 500 -brightness 255
+                $UGREEN_LEDS_CLI "$led_name" -color 255 0 0 -brightness 255 -blink 500 500
                 ;;
             "off")
                 $UGREEN_LEDS_CLI "$led_name" -off
@@ -954,15 +954,15 @@ restore_system_leds() {
     echo "恢复系统LED状态..."
     
     # 恢复电源LED (绿色常亮)
-    $UGREEN_LEDS_CLI power -color 0 255 0 -on -brightness 128
+    $UGREEN_LEDS_CLI power -color 0 255 0 -brightness 128 -on
     
     # 恢复网络LED (根据网络状态)
     if ip route | grep -q default; then
         # 有网络连接，蓝色常亮
-        $UGREEN_LEDS_CLI netdev -color 0 100 255 -on -brightness 128
+        $UGREEN_LEDS_CLI netdev -color 0 100 255 -brightness 128 -on
     else
         # 无网络连接，橙色常亮
-        $UGREEN_LEDS_CLI netdev -color 255 165 0 -on -brightness 64
+        $UGREEN_LEDS_CLI netdev -color 255 165 0 -brightness 64 -on
     fi
     
     echo "系统LED已恢复正常"
@@ -1119,12 +1119,12 @@ case "${1:-menu}" in
                 6) 
                     echo "设置节能模式..."
                     # 保持电源LED低亮度显示
-                    $UGREEN_LEDS_CLI power -color 0 255 0 -on -brightness 32
+                    $UGREEN_LEDS_CLI power -color 0 255 0 -brightness 32 -on
                     # 保持网络LED低亮度显示
                     if ip route | grep -q default; then
-                        $UGREEN_LEDS_CLI netdev -color 0 100 255 -on -brightness 32
+                        $UGREEN_LEDS_CLI netdev -color 0 100 255 -brightness 32 -on
                     else
-                        $UGREEN_LEDS_CLI netdev -color 255 165 0 -on -brightness 32
+                        $UGREEN_LEDS_CLI netdev -color 255 165 0 -brightness 32 -on
                     fi
                     # 关闭硬盘LED
                     for i in {1..4}; do $UGREEN_LEDS_CLI disk$i -off; done
@@ -1133,7 +1133,7 @@ case "${1:-menu}" in
                     ;;
                 7) 
                     echo "设置夜间模式..."
-                    $UGREEN_LEDS_CLI all -color 255 255 255 -on -brightness 16
+                    $UGREEN_LEDS_CLI all -color 255 255 255 -brightness 16 -on
                     echo "夜间模式已设置"
                     read -p "按回车继续..."
                     ;;
