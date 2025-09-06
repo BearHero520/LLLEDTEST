@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 绿联LED控制工具 - 一键安装脚本
-# 版本: 3.0.0
+# 版本: 3.2.6
 # 更新时间: 2025-09-06
 # 唯一安装入口: 本脚本是LLLED系统的唯一安装方式
 
@@ -19,7 +19,7 @@ INSTALL_DIR="/opt/ugreen-led-controller"
 LOG_DIR="/var/log/llled"
 
 # 全局版本号
-LLLED_VERSION="3.2.2"
+LLLED_VERSION="3.2.6"
 
 # 支持的UGREEN设备列表
 SUPPORTED_MODELS=(
