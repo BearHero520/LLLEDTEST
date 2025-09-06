@@ -259,24 +259,31 @@ get_disk_status() {
     fi
     
     # 成功获取hdparm输出，解析硬盘状态
-    if [[ "$hdparm_output" =~ "drive state is:"[[:space:]]*([^[:space:]]+) ]]; then
+    if [[ "$hdparm_output" =~ drive\ state\ is:[[:space:]]*([^[:space:]]+) ]]; then
         local drive_state="${BASH_REMATCH[1]}"
+        log_message "DEBUG" "硬盘 $disk hdparm输出: $hdparm_output"
+        log_message "DEBUG" "解析到的驱动器状态: '$drive_state'"
+        
         case "$drive_state" in
             "active/idle"|"active"|"idle")
+                log_message "DEBUG" "硬盘 $disk 状态: 活跃"
                 echo "active"
                 return 0
                 ;;
             "standby"|"sleeping")
+                log_message "DEBUG" "硬盘 $disk 状态: 休眠"
                 echo "standby"
                 return 0
                 ;;
             *)
+                log_message "DEBUG" "硬盘 $disk 状态: 未知 ($drive_state)"
                 echo "unknown"
                 return 0
                 ;;
         esac
     else
-        # hdparm返回成功但无法解析状态，可能是硬盘问题
+        # hdparm返回成功但无法解析状态，记录完整输出用于调试
+        log_message "WARN" "无法解析硬盘 $disk 的hdparm输出: $hdparm_output"
         echo "unknown"
         return 0
     fi
@@ -590,8 +597,6 @@ main_loop() {
                 log_message "WARN" "定期HCTL配置刷新失败，将在下次继续尝试"
             fi
         fi
-            fi
-        fi
         
         # 等待下次检查
         sleep "$CHECK_INTERVAL"
@@ -793,7 +798,10 @@ show_help() {
 # 主程序入口
 case "${1:-start}" in
     start)
-        start_daemon
+        start_daemon true
+        ;;
+    _daemon_process)
+        _start_daemon_direct
         ;;
     stop)
         stop_daemon
