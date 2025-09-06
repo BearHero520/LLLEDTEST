@@ -345,6 +345,9 @@ update_disk_leds() {
         return
     fi
     
+    # 收集当前应该使用的LED列表
+    local used_leds=()
+    
     # 遍历所有HCTL配置中的硬盘
     for disk in "${!DISK_LED_MAP[@]}"; do
         local led="${DISK_LED_MAP[$disk]:-}"
@@ -379,6 +382,9 @@ update_disk_leds() {
             continue
         fi
         
+        # 记录这个LED正在使用
+        used_leds+=("$led")
+        
         # 能获取到硬盘状态，检查是否需要更新LED
         local cached_status="${DISK_STATUS_CACHE[$disk]:-}"
         if [[ "$disk_status" == "$cached_status" ]]; then
@@ -410,6 +416,30 @@ update_disk_leds() {
                 log_message "WARN" "硬盘 $disk 未知状态: $disk_status"
                 ;;
         esac
+    done
+    
+    # 关闭未使用的硬盘LED
+    for led in "${AVAILABLE_LEDS[@]}"; do
+        # 只处理硬盘LED
+        if [[ "$led" =~ ^disk[0-9]+$ ]]; then
+            local led_in_use=false
+            for used_led in "${used_leds[@]}"; do
+                if [[ "$led" == "$used_led" ]]; then
+                    led_in_use=true
+                    break
+                fi
+            done
+            
+            # 如果这个LED没有被使用，关闭它
+            if [[ "$led_in_use" == "false" ]]; then
+                local current_status="${LED_STATUS_CACHE[$led]:-}"
+                if [[ "$current_status" != "off" ]]; then
+                    log_message "INFO" "关闭未使用的硬盘LED: $led"
+                    set_led_status "$led" "off"
+                    ((updated_count++))
+                fi
+            fi
+        fi
     done
     
     # 如果检测到硬盘位置变化，重新生成HCTL配置
@@ -513,6 +543,15 @@ start_daemon() {
     fi
     
     detect_available_leds
+    
+    # 启动时清理所有硬盘LED状态，确保干净的初始状态
+    log_message "INFO" "【初始化】清理所有硬盘LED状态"
+    for led in "${AVAILABLE_LEDS[@]}"; do
+        if [[ "$led" =~ ^disk[0-9]+$ ]]; then
+            set_led_status "$led" "off"
+            log_message "DEBUG" "已关闭硬盘LED: $led"
+        fi
+    done
     
     # ===== 三步初始化流程 =====
     
