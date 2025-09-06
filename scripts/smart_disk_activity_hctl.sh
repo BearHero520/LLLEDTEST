@@ -525,7 +525,7 @@ set_disk_led_by_activity() {
     
     if [[ "$sleep_status" == "SLEEPING" ]]; then
         # 休眠状态 - 淡白色
-        "$UGREEN_CLI" "$led_name" -color "$DISK_COLOR_STANDBY" -on -brightness ${LOW_BRIGHTNESS:-16}
+        "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_STANDBY -on -brightness ${LOW_BRIGHTNESS:-16}
         echo "  -> 休眠状态: 淡白色"
         return
     fi
@@ -553,17 +553,17 @@ set_disk_led_by_activity() {
             case "$activity" in
                 "ACTIVE")
                     # 活动且健康 - 白色高亮
-                    "$UGREEN_CLI" "$led_name" -color "$DISK_COLOR_ACTIVE" -on -brightness ${HIGH_BRIGHTNESS:-128}
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ACTIVE -on -brightness ${HIGH_BRIGHTNESS:-128}
                     echo "  -> 活动健康: 白色高亮"
                     ;;
                 "IDLE")
                     # 空闲且健康 - 白色默认亮度
-                    "$UGREEN_CLI" "$led_name" -color "$DISK_COLOR_ACTIVE" -on -brightness ${DEFAULT_BRIGHTNESS:-64}
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ACTIVE -on -brightness ${DEFAULT_BRIGHTNESS:-64}
                     echo "  -> 空闲健康: 白色默认"
                     ;;
                 *)
                     # 状态未知 - 白色默认亮度
-                    "$UGREEN_CLI" "$led_name" -color "$DISK_COLOR_ACTIVE" -on -brightness ${DEFAULT_BRIGHTNESS:-64}
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ACTIVE -on -brightness ${DEFAULT_BRIGHTNESS:-64}
                     echo "  -> 状态未知但健康: 白色默认"
                     ;;
             esac
@@ -572,19 +572,19 @@ set_disk_led_by_activity() {
             case "$activity" in
                 "ACTIVE")
                     # 活动但异常 - 关闭LED (新配色方案)
-                    "$UGREEN_CLI" "$led_name" -color "$DISK_COLOR_ERROR" -off
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ERROR -off
                     echo "  -> 活动异常: LED关闭"
                     ;;
                 *)
                     # 空闲但异常 - 关闭LED (新配色方案)
-                    "$UGREEN_CLI" "$led_name" -color "$DISK_COLOR_ERROR" -off
+                    "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ERROR -off
                     echo "  -> 空闲异常: LED关闭"
                     ;;
             esac
             ;;
         *)
             # 状态未知 - 关闭LED (新配色方案)
-            "$UGREEN_CLI" "$led_name" -color "$DISK_COLOR_ERROR" -off
+            "$UGREEN_CLI" "$led_name" -color $DISK_COLOR_ERROR -off
             echo "  -> 状态未知: LED关闭"
             ;;
     esac
