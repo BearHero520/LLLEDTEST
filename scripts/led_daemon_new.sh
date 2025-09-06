@@ -96,7 +96,7 @@ load_configs() {
         DISK_COLOR_ACTIVE="255 255 255"    # 硬盘活动 - 白色
         DISK_COLOR_STANDBY="128 128 128"   # 硬盘休眠 - 淡白色
         DISK_COLOR_ERROR="0 0 0"           # 硬盘错误 - 不显示
-        DISK_COLOR_WARNING="0 0 0"         # 硬盘警告 - 不显示
+        DISK_COLOR_WARNING="255 165 0"
     fi
     
     # 应用配置中的检查间隔
@@ -358,8 +358,8 @@ update_disk_leds() {
                     ;;
                 "error")
                     log_message "ERROR" "硬盘 $disk 状态检查错误"
-                    # 设置错误状态LED (关闭)
-                    set_led_status "$led" "off"
+                    # 设置错误状态LED
+                    set_led_status "$led" "$DISK_COLOR_ERROR" "$DEFAULT_BRIGHTNESS"
                     ((error_count++))
                     continue
                     ;;
@@ -389,8 +389,8 @@ update_disk_leds() {
                 ((updated_count++))
                 ;;
             "unknown")
-                log_message "WARN" "硬盘 $disk 状态未知 -> 关闭LED"
-                set_led_status "$led" "off"
+                log_message "WARN" "硬盘 $disk 状态未知 -> LED $led"
+                set_led_status "$led" "$DISK_COLOR_WARNING" "$DEFAULT_BRIGHTNESS"
                 ((updated_count++))
                 ;;
             *)
