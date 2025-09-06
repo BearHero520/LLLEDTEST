@@ -241,22 +241,30 @@ load_hctl_mapping() {
     return 0
 }
 
-# 重新获取HCTL映射 (调用智能硬盘状态显示逻辑)
+# 重新获取HCTL映射 (生成新的硬盘-LED配置)
 refresh_hctl_mapping() {
-    log_message "INFO" "重新获取HCTL硬盘映射..."
+    log_message "INFO" "重新生成HCTL硬盘映射配置..."
     
-    # 调用智能硬盘状态显示脚本
+    # 调用智能硬盘状态脚本来生成HCTL配置
     local hctl_script="$SCRIPT_DIR/scripts/smart_disk_activity_hctl.sh"
     if [[ -x "$hctl_script" ]]; then
-        log_message "INFO" "调用HCTL检测脚本: $hctl_script"
-        if "$hctl_script" --update-mapping; then
-            log_message "INFO" "HCTL映射更新成功"
-            # 重新加载映射
-            load_hctl_mapping
-            LAST_HCTL_UPDATE=$(date +%s)
-            return 0
+        log_message "INFO" "调用HCTL检测脚本生成配置: $hctl_script"
+        
+        # 执行脚本来生成HCTL映射配置（不带参数，让脚本生成配置文件）
+        if "$hctl_script" >/dev/null 2>&1; then
+            log_message "INFO" "HCTL配置生成成功"
+            
+            # 重新加载生成的映射配置
+            if load_hctl_mapping; then
+                LAST_HCTL_UPDATE=$(date +%s)
+                log_message "INFO" "HCTL映射配置重新加载完成"
+                return 0
+            else
+                log_message "ERROR" "重新加载HCTL映射配置失败"
+                return 1
+            fi
         else
-            log_message "ERROR" "HCTL映射更新失败"
+            log_message "ERROR" "HCTL配置生成失败"
             return 1
         fi
     else
@@ -323,54 +331,55 @@ set_led_status() {
     return 0
 }
 
-# 更新硬盘LED状态
+# 更新硬盘LED状态 (基于HCTL配置)
 update_disk_leds() {
     local updated_count=0
-    local error_count=0
+    local need_remap=false
     
-    # 获取当前可用硬盘
-    get_available_disks
+    log_message "DEBUG" "开始更新硬盘LED状态，当前映射数量: ${#DISK_LED_MAP[@]}"
     
-    # 首先处理所有映射中的硬盘（包括可能已拔出的）
+    # 如果没有HCTL映射配置，立即生成
+    if [[ ${#DISK_LED_MAP[@]} -eq 0 ]]; then
+        log_message "INFO" "没有HCTL映射配置，立即生成..."
+        refresh_hctl_mapping
+        return
+    fi
+    
+    # 遍历所有HCTL配置中的硬盘
     for disk in "${!DISK_LED_MAP[@]}"; do
         local led="${DISK_LED_MAP[$disk]:-}"
         
-        # 如果没有LED映射，跳过
+        # 跳过无效的LED映射
         if [[ -z "$led" || "$led" == "none" ]]; then
-            log_message "DEBUG" "硬盘 $disk 没有LED映射"
+            log_message "DEBUG" "硬盘 $disk 无LED映射，跳过"
             continue
         fi
         
-        # 通过获取硬盘状态来判断硬盘是否存在和可用
+        # 关键步骤：尝试获取HCTL配置中硬盘的当前状态
         local disk_status
         disk_status=$(get_disk_status "$disk")
         local status_result=$?
         
-        log_message "DEBUG" "硬盘 $disk 状态检测: status=$disk_status, result=$status_result"
+        log_message "DEBUG" "HCTL配置硬盘 $disk -> LED $led: status=$disk_status, result=$status_result"
         
-        # 如果无法获取状态，说明硬盘已经拔出或无响应
+        # 如果无法获取硬盘状态，说明硬盘位置变化或被拔出
         if [[ $status_result -ne 0 ]]; then
             case "$disk_status" in
                 "not_found"|"error")
-                    log_message "WARN" "硬盘 $disk 无法访问 (状态: $disk_status)，关闭LED $led"
-                    set_led_status "$led" "off"
-                    # 从映射中移除无法访问的硬盘
-                    unset DISK_LED_MAP["$disk"]
-                    unset DISK_STATUS_CACHE["$disk"]
-                    unset DISK_HCTL_MAP["$disk"]
-                    ((updated_count++))
+                    log_message "WARN" "HCTL配置中的硬盘 $disk 无法访问 (状态: $disk_status)"
+                    log_message "INFO" "硬盘位置可能变化或已拔出，关闭LED $led"
                     
-                    # 如果是not_found，触发HCTL重映射
-                    if [[ "$disk_status" == "not_found" ]]; then
-                        log_message "INFO" "触发HCTL重映射以检测硬盘变化"
-                        refresh_hctl_mapping >/dev/null 2>&1 &  # 后台执行，不阻塞
-                    fi
-                    continue
+                    # 立即关闭对应LED
+                    set_led_status "$led" "off"
+                    
+                    # 标记需要重新生成HCTL配置
+                    need_remap=true
                     ;;
             esac
+            continue
         fi
         
-        # 检查状态是否变化
+        # 能获取到硬盘状态，检查是否需要更新LED
         local cached_status="${DISK_STATUS_CACHE[$disk]:-}"
         if [[ "$disk_status" == "$cached_status" ]]; then
             log_message "DEBUG" "硬盘 $disk 状态无变化: $disk_status"
@@ -380,20 +389,20 @@ update_disk_leds() {
         # 更新状态缓存
         DISK_STATUS_CACHE["$disk"]="$disk_status"
         
-        # 根据硬盘状态设置LED
+        # 根据硬盘状态更新LED（只更新LED，不改变配置）
         case "$disk_status" in
             "active")
-                log_message "INFO" "硬盘 $disk 活动状态 -> LED $led"
+                log_message "INFO" "硬盘 $disk 活动状态 -> LED $led 白色高亮"
                 set_led_status "$led" "$DISK_COLOR_ACTIVE" "$HIGH_BRIGHTNESS"
                 ((updated_count++))
                 ;;
             "standby")
-                log_message "INFO" "硬盘 $disk 休眠状态 -> LED $led"
+                log_message "INFO" "硬盘 $disk 休眠状态 -> LED $led 淡白色"
                 set_led_status "$led" "$DISK_COLOR_STANDBY" "$LOW_BRIGHTNESS"
                 ((updated_count++))
                 ;;
             "unknown")
-                log_message "WARN" "硬盘 $disk 状态未知 -> 关闭LED"
+                log_message "WARN" "硬盘 $disk 状态未知 -> LED $led 关闭"
                 set_led_status "$led" "off"
                 ((updated_count++))
                 ;;
@@ -403,28 +412,14 @@ update_disk_leds() {
         esac
     done
     
-    # 更新统计信息
-    if [[ $error_count -gt 0 ]]; then
-        ERROR_COUNT=$((ERROR_COUNT + error_count))
-        log_message "WARN" "本次更新遇到 $error_count 个错误，累计错误: $ERROR_COUNT"
-        
-        # 如果错误过多，触发HCTL重映射
-        if [[ $ERROR_COUNT -ge $MAX_ERRORS ]]; then
-            log_message "ERROR" "错误次数过多，触发HCTL重映射"
-            if refresh_hctl_mapping; then
-                ERROR_COUNT=0
-                log_message "INFO" "HCTL重映射成功，错误计数已重置"
-            fi
-        fi
-    else
-        # 重置错误计数
-        if [[ $ERROR_COUNT -gt 0 ]]; then
-            ERROR_COUNT=0
-            log_message "INFO" "硬盘状态正常，错误计数已重置"
-        fi
+    # 如果检测到硬盘位置变化，重新生成HCTL配置
+    if [[ "$need_remap" == "true" ]]; then
+        log_message "INFO" "检测到硬盘位置变化，重新生成HCTL配置..."
+        refresh_hctl_mapping
+        return
     fi
     
-    log_message "DEBUG" "LED更新完成，更新了 $updated_count 个LED"
+    log_message "DEBUG" "LED状态更新完成，更新了 $updated_count 个LED"
 }
 
 # 信号处理函数
@@ -449,31 +444,41 @@ handle_signal() {
     exit 0
 }
 
-# 主循环
+# 主循环 - 严格按照HCTL配置进行监控
 main_loop() {
-    log_message "INFO" "后台监控循环启动，检查间隔: ${CHECK_INTERVAL}秒"
+    log_message "INFO" "主监控循环启动，检查间隔: ${CHECK_INTERVAL}秒"
+    log_message "INFO" "当前HCTL配置：${#DISK_LED_MAP[@]} 个硬盘映射"
+    
+    # 记录开始时间用于定期重映射
+    local last_hctl_refresh=$(date +%s)
+    local hctl_refresh_interval=3600  # 1小时定期刷新
     
     while [[ "$DAEMON_RUNNING" == "true" ]]; do
-        # 更新硬盘LED状态
+        local current_time=$(date +%s)
+        
+        # 核心步骤：严格基于当前HCTL配置更新硬盘LED状态
+        # 只检查配置中的硬盘，不扫描新硬盘
         update_disk_leds
         
-        # 检查是否需要定期更新HCTL映射
-        local current_time=$(date +%s)
-        local hctl_update_interval=$((3600))  # 1小时
-        
-        if [[ $((current_time - LAST_HCTL_UPDATE)) -gt $hctl_update_interval ]]; then
-            log_message "INFO" "定期更新HCTL映射..."
+        # 定期刷新HCTL配置（处理硬盘热插拔情况）
+        if [[ $((current_time - last_hctl_refresh)) -gt $hctl_refresh_interval ]]; then
+            log_message "INFO" "定期HCTL配置刷新时间到达，重新生成配置..."
             if refresh_hctl_mapping; then
-                LAST_HCTL_UPDATE=$current_time
+                log_message "INFO" "定期HCTL配置刷新成功，当前映射数量: ${#DISK_LED_MAP[@]}"
+                last_hctl_refresh=$current_time
+            else
+                log_message "WARN" "定期HCTL配置刷新失败，将在下次继续尝试"
             fi
         fi
         
         # 等待下次检查
         sleep "$CHECK_INTERVAL"
     done
+    
+    log_message "INFO" "主监控循环结束"
 }
 
-# 守护进程启动函数
+# 守护进程启动函数 - 严格的三步初始化流程
 start_daemon() {
     log_message "INFO" "启动LLLED后台监控服务 v$LLLED_VERSION"
     
@@ -498,7 +503,7 @@ start_daemon() {
     trap 'handle_signal INT' INT
     trap 'handle_signal QUIT' QUIT
     
-    # 初始化
+    # 基础环境检查
     check_root
     load_configs
     
@@ -509,14 +514,34 @@ start_daemon() {
     
     detect_available_leds
     
-    # 加载或刷新HCTL映射
-    if ! load_hctl_mapping; then
-        log_message "INFO" "首次运行，执行HCTL映射检测..."
-        if ! refresh_hctl_mapping; then
-            log_message "ERROR" "初始HCTL映射失败，服务无法启动"
-            exit 1
-        fi
+    # ===== 三步初始化流程 =====
+    
+    # 第一步：生成HCTL配置建立硬盘-LED映射关系
+    log_message "INFO" "【第一步】生成HCTL配置建立硬盘-LED映射关系"
+    if ! refresh_hctl_mapping; then
+        log_message "ERROR" "HCTL映射生成失败，服务无法启动"
+        exit 1
     fi
+    
+    # 验证第一步结果
+    if [[ ${#DISK_LED_MAP[@]} -eq 0 ]]; then
+        log_message "WARN" "警告：没有检测到任何硬盘映射，服务将持续监控"
+    else
+        log_message "INFO" "第一步完成，已建立 ${#DISK_LED_MAP[@]} 个硬盘-LED映射："
+        for disk in "${!DISK_LED_MAP[@]}"; do
+            local led="${DISK_LED_MAP[$disk]}"
+            local hctl_info="${DISK_HCTL_MAP[$disk]}"
+            log_message "INFO" "  $disk -> LED $led (HCTL: ${hctl_info%%|*})"
+        done
+    fi
+    
+    # 第二步：根据HCTL配置设置硬盘LED初始状态
+    log_message "INFO" "【第二步】根据HCTL配置设置硬盘LED初始状态"
+    update_disk_leds
+    log_message "INFO" "第二步完成，硬盘LED初始状态设置完毕"
+    
+    # 第三步：开始持续监控循环
+    log_message "INFO" "【第三步】开始基于HCTL配置的持续监控循环"
     
     # 启动主循环
     main_loop
