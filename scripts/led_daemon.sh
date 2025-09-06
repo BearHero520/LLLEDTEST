@@ -148,6 +148,86 @@ detect_available_leds() {
     return 0
 }
 
+# 检查网络状态
+check_network_status() {
+    # 从配置文件读取网络测试主机，默认使用Google DNS
+    local test_host="${NETWORK_TEST_HOST:-8.8.8.8}"
+    local timeout="${NETWORK_TIMEOUT:-3}"
+    
+    # 尝试ping测试
+    if ping -c 1 -W "$timeout" "$test_host" >/dev/null 2>&1; then
+        echo "connected"
+        return 0
+    fi
+    
+    # 如果第一个主机失败，尝试备用主机
+    local backup_hosts=("1.1.1.1" "114.114.114.114" "8.8.4.4")
+    for host in "${backup_hosts[@]}"; do
+        if ping -c 1 -W "$timeout" "$host" >/dev/null 2>&1; then
+            echo "connected"
+            return 0
+        fi
+    done
+    
+    # 检查网络接口状态
+    if ip route get "$test_host" >/dev/null 2>&1; then
+        echo "no_internet"  # 有路由但无法访问外网
+        return 1
+    else
+        echo "disconnected"  # 完全断网
+        return 2
+    fi
+}
+
+# 更新网络LED状态
+update_network_led() {
+    local network_status
+    network_status=$(check_network_status)
+    local status_result=$?
+    
+    # 检查netdev LED是否可用
+    if [[ ! " ${AVAILABLE_LEDS[*]} " =~ " netdev " ]]; then
+        log_message "DEBUG" "网络LED不可用，跳过网络状态更新"
+        return
+    fi
+    
+    case "$network_status" in
+        "connected")
+            # 网络正常 - 蓝色
+            log_message "DEBUG" "网络状态: 已连接 -> 蓝色LED"
+            set_led_status "netdev" "0 0 255" "64"  # 蓝色，中等亮度
+            ;;
+        "no_internet")
+            # 有网络但无法访问外网 - 橙色
+            log_message "WARN" "网络状态: 无法访问外网 -> 橙色LED"
+            set_led_status "netdev" "255 165 0" "64"  # 橙色
+            ;;
+        "disconnected")
+            # 网络断开 - 红色
+            log_message "WARN" "网络状态: 断开连接 -> 红色LED"
+            set_led_status "netdev" "255 0 0" "64"  # 红色
+            ;;
+        *)
+            # 未知状态 - 关闭LED
+            log_message "ERROR" "网络状态: 未知 -> 关闭LED"
+            set_led_status "netdev" "off"
+            ;;
+    esac
+}
+
+# 更新电源LED状态
+update_power_led() {
+    # 检查power LED是否可用
+    if [[ ! " ${AVAILABLE_LEDS[*]} " =~ " power " ]]; then
+        log_message "DEBUG" "电源LED不可用，跳过电源状态更新"
+        return
+    fi
+    
+    # 电源LED保持淡白色常亮表示系统运行正常
+    log_message "DEBUG" "更新电源LED状态 -> 淡白色常亮"
+    set_led_status "power" "128 128 128" "64"  # 淡白色，中等亮度
+}
+
 # 获取硬盘状态 (使用hdparm，优先检测硬盘可访问性)
 get_disk_status() {
     local disk="$1"
@@ -319,7 +399,7 @@ set_led_status() {
             return 1
         fi
     else
-        if "$UGREEN_CLI" "$led" -color "$color" -brightness "$brightness" >/dev/null 2>&1; then
+        if "$UGREEN_CLI" "$led" -color "$color" -brightness "$brightness" -on >/dev/null 2>&1; then
             LED_STATUS_CACHE["$led"]="$color|$brightness"
             log_message "DEBUG" "LED $led 设置为 $color (亮度: $brightness)"
         else
@@ -479,9 +559,11 @@ main_loop() {
     log_message "INFO" "主监控循环启动，检查间隔: ${CHECK_INTERVAL}秒"
     log_message "INFO" "当前HCTL配置：${#DISK_LED_MAP[@]} 个硬盘映射"
     
-    # 记录开始时间用于定期重映射
+    # 记录开始时间用于定期重映射和系统LED更新
     local last_hctl_refresh=$(date +%s)
-    local hctl_refresh_interval=3600  # 1小时定期刷新
+    local last_system_led_update=$(date +%s)
+    local hctl_refresh_interval=3600  # 1小时定期刷新HCTL
+    local system_led_interval=30     # 30秒更新一次系统LED
     
     while [[ "$DAEMON_RUNNING" == "true" ]]; do
         local current_time=$(date +%s)
@@ -489,6 +571,14 @@ main_loop() {
         # 核心步骤：严格基于当前HCTL配置更新硬盘LED状态
         # 只检查配置中的硬盘，不扫描新硬盘
         update_disk_leds
+        
+        # 定期更新系统LED状态（电源和网络）
+        if [[ $((current_time - last_system_led_update)) -gt $system_led_interval ]]; then
+            log_message "DEBUG" "更新系统LED状态..."
+            update_power_led
+            update_network_led
+            last_system_led_update=$current_time
+        fi
         
         # 定期刷新HCTL配置（处理硬盘热插拔情况）
         if [[ $((current_time - last_hctl_refresh)) -gt $hctl_refresh_interval ]]; then
@@ -498,6 +588,8 @@ main_loop() {
                 last_hctl_refresh=$current_time
             else
                 log_message "WARN" "定期HCTL配置刷新失败，将在下次继续尝试"
+            fi
+        fi
             fi
         fi
         
@@ -585,6 +677,11 @@ _start_daemon_direct() {
             log_message "DEBUG" "已关闭硬盘LED: $led"
         fi
     done
+    
+    # 初始化系统LED状态
+    log_message "INFO" "【初始化】设置系统LED初始状态"
+    update_power_led
+    update_network_led
     
     # ===== 三步初始化流程 =====
     

@@ -669,31 +669,110 @@ EOF
 restore_system_leds() {
     echo -e "${CYAN}恢复系统LED (电源+网络)${NC}"
     echo
+    
+    # 先检查LED控制程序是否工作
+    echo -e "${BLUE}检查LED控制程序状态...${NC}"
+    if ! "$UGREEN_CLI" --help >/dev/null 2>&1; then
+        echo -e "${RED}✗ LED控制程序无法正常工作${NC}"
+        echo -e "${YELLOW}请检查 $UGREEN_CLI 是否存在且有执行权限${NC}"
+        echo
+        read -p "按回车键继续..."
+        return
+    fi
+    echo -e "${GREEN}✓ LED控制程序正常${NC}"
+    echo
+    
     echo "1. 恢复电源LED (白色常亮)"
     echo "2. 恢复网络LED (蓝色常亮)"
     echo "3. 恢复所有系统LED"
-    echo "4. 返回主菜单"
+    echo "4. 测试LED控制功能"
+    echo "5. 返回主菜单"
     echo
-    read -p "请选择操作 (1-4): " choice
+    read -p "请选择操作 (1-5): " choice
     
     case $choice in
         1)
             echo -e "${CYAN}恢复电源LED...${NC}"
-            "$UGREEN_CLI" power -color "128 128 128" -brightness 64 2>/dev/null
-            echo -e "${GREEN}✓ 电源LED已恢复 (淡白色)${NC}"
+            if "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on; then
+                echo -e "${GREEN}✓ 电源LED已恢复 (淡白色)${NC}"
+            else
+                echo -e "${RED}✗ 电源LED恢复失败${NC}"
+                echo -e "${YELLOW}请检查LED控制程序是否正常工作${NC}"
+            fi
             ;;
         2)
             echo -e "${CYAN}恢复网络LED...${NC}"
-            "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 2>/dev/null
-            echo -e "${GREEN}✓ 网络LED已恢复${NC}"
+            if "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on; then
+                echo -e "${GREEN}✓ 网络LED已恢复 (蓝色)${NC}"
+            else
+                echo -e "${RED}✗ 网络LED恢复失败${NC}"
+                echo -e "${YELLOW}请检查LED控制程序是否正常工作${NC}"
+            fi
             ;;
         3)
             echo -e "${CYAN}恢复所有系统LED...${NC}"
-            "$UGREEN_CLI" power -color "128 128 128" -brightness 64 2>/dev/null
-            "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 2>/dev/null
-            echo -e "${GREEN}✓ 系统LED已恢复${NC}"
+            local power_result=0
+            local netdev_result=0
+            
+            echo -e "${BLUE}  正在恢复电源LED...${NC}"
+            if "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on; then
+                echo -e "${GREEN}  ✓ 电源LED恢复成功${NC}"
+            else
+                echo -e "${RED}  ✗ 电源LED恢复失败${NC}"
+                power_result=1
+            fi
+            
+            echo -e "${BLUE}  正在恢复网络LED...${NC}"
+            if "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on; then
+                echo -e "${GREEN}  ✓ 网络LED恢复成功${NC}"
+            else
+                echo -e "${RED}  ✗ 网络LED恢复失败${NC}"
+                netdev_result=1
+            fi
+            
+            echo
+            if [[ $power_result -eq 0 && $netdev_result -eq 0 ]]; then
+                echo -e "${GREEN}✓ 所有系统LED已恢复${NC}"
+            else
+                echo -e "${YELLOW}⚠ 部分系统LED恢复失败${NC}"
+                echo -e "${BLUE}请检查LED控制程序是否正常工作${NC}"
+            fi
             ;;
         4)
+            echo -e "${CYAN}测试LED控制功能...${NC}"
+            echo -e "${BLUE}正在测试电源LED...${NC}"
+            
+            # 测试电源LED - 先关闭再打开
+            if "$UGREEN_CLI" power -off; then
+                echo -e "${GREEN}  ✓ 电源LED关闭成功${NC}"
+                sleep 1
+                if "$UGREEN_CLI" power -color "255 255 255" -brightness 64 -on; then
+                    echo -e "${GREEN}  ✓ 电源LED点亮成功${NC}"
+                else
+                    echo -e "${RED}  ✗ 电源LED点亮失败${NC}"
+                fi
+            else
+                echo -e "${RED}  ✗ 电源LED控制失败${NC}"
+            fi
+            
+            echo -e "${BLUE}正在测试网络LED...${NC}"
+            
+            # 测试网络LED - 先关闭再打开
+            if "$UGREEN_CLI" netdev -off; then
+                echo -e "${GREEN}  ✓ 网络LED关闭成功${NC}"
+                sleep 1
+                if "$UGREEN_CLI" netdev -color "0 255 0" -brightness 64 -on; then
+                    echo -e "${GREEN}  ✓ 网络LED点亮成功${NC}"
+                else
+                    echo -e "${RED}  ✗ 网络LED点亮失败${NC}"
+                fi
+            else
+                echo -e "${RED}  ✗ 网络LED控制失败${NC}"
+            fi
+            
+            echo -e "${GREEN}LED控制功能测试完成${NC}"
+            ;;
+        5)
             return
             ;;
         *)
