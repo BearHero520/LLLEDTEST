@@ -75,29 +75,46 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# 检测可用LED
+# 检测可用LED槽位
 detect_available_leds() {
-    echo -e "${CYAN}检测可用LED...${NC}"
+    echo -e "${CYAN}检测可用LED槽位...${NC}"
     
     local led_status
     led_status=$("$UGREEN_CLI" all -status 2>/dev/null)
     
     if [[ -z "$led_status" ]]; then
-        echo -e "${RED}无法检测LED状态，请检查ugreen_leds_cli${NC}"
-        return 1
+        echo -e "${YELLOW}无法获取LED状态，使用默认LED配置${NC}"
+        # 使用默认的LED槽位
+        DISK_LEDS=("disk1" "disk2" "disk3" "disk4" "disk5" "disk6" "disk7" "disk8")
+        echo -e "${YELLOW}使用默认LED槽位: ${DISK_LEDS[*]}${NC}"
+        return 0
     fi
     
     echo -e "${YELLOW}检测到的LED状态:${NC}"
     echo "$led_status"
     
-    # 解析LED状态，提取可用的disk LED
+    # 解析LED状态，提取可用的disk LED槽位
     while read -r line; do
-        if [[ "$line" =~ LED[[:space:]]+([^[:space:]]+) ]]; then
+        if [[ "$line" =~ ^([^:]+):[[:space:]]*status[[:space:]]*= ]]; then
             local led_name="${BASH_REMATCH[1]}"
             if [[ "$led_name" =~ ^disk[0-9]+$ ]]; then
                 DISK_LEDS+=("$led_name")
-                echo -e "${GREEN}✓ 检测到硬盘LED: $led_name${NC}"
+                echo -e "${GREEN}✓ 检测到LED槽位: $led_name${NC}"
             fi
+        fi
+    done <<< "$led_status"
+    
+    if [[ ${#DISK_LEDS[@]} -eq 0 ]]; then
+        echo -e "${YELLOW}未检测到硬盘LED槽位，将使用默认配置${NC}"
+        # 提供默认的LED槽位配置
+        DISK_LEDS=("disk1" "disk2" "disk3" "disk4" "disk5" "disk6" "disk7" "disk8")
+        echo -e "${YELLOW}使用默认LED槽位: ${DISK_LEDS[*]}${NC}"
+    fi
+    
+    echo -e "${BLUE}可用LED槽位 (${#DISK_LEDS[@]}个): ${DISK_LEDS[*]}${NC}"
+    return 0
+}
+
 # 加载配置
 load_config() {
     if [[ -f "$LED_CONFIG" ]]; then
@@ -143,49 +160,6 @@ ensure_config_dir() {
         mkdir -p "$CONFIG_DIR"
         echo -e "${GREEN}创建配置目录: $CONFIG_DIR${NC}"
     fi
-}
-
-# 检测可用LED
-detect_available_leds() {
-    echo -e "${CYAN}检测可用LED...${NC}"
-    
-    local led_status
-    led_status=$("$UGREEN_CLI" all -status 2>/dev/null)
-    
-    if [[ -z "$led_status" ]]; then
-        echo -e "${YELLOW}无法获取LED状态，尝试探测...${NC}"
-        # 探测硬盘LED
-        DISK_LEDS=()
-        for i in {1..16}; do
-            local test_led="disk$i"
-            if "$UGREEN_CLI" "$test_led" -status >/dev/null 2>&1; then
-                DISK_LEDS+=("$test_led")
-                echo -e "${GREEN}✓ 检测到LED: $test_led${NC}"
-            fi
-        done
-    else
-        echo -e "${YELLOW}LED状态信息:${NC}"
-        echo "$led_status"
-        
-        # 解析LED状态，提取可用的disk LED
-        while read -r line; do
-            if [[ "$line" =~ LED[[:space:]]+([^[:space:]]+) ]]; then
-                local led_name="${BASH_REMATCH[1]}"
-                if [[ "$led_name" =~ ^disk[0-9]+$ ]]; then
-                    DISK_LEDS+=("$led_name")
-                    echo -e "${GREEN}✓ 检测到硬盘LED: $led_name${NC}"
-                fi
-            fi
-        done <<< "$led_status"
-    fi
-    
-    if [[ ${#DISK_LEDS[@]} -eq 0 ]]; then
-        echo -e "${RED}未检测到硬盘LED，请检查设备兼容性${NC}"
-        exit 1
-    fi
-    
-    echo -e "${BLUE}可用硬盘LED (${#DISK_LEDS[@]}个): ${DISK_LEDS[*]}${NC}"
-    return 0
 }
 
 # HCTL硬盘映射检测
@@ -783,10 +757,10 @@ main() {
         return 1
     fi
     
-    # 检测可用LED
+    # 检测可用LED槽位
     if ! detect_available_leds; then
-        echo -e "${RED}LED检测失败${NC}"
-        return 1
+        echo -e "${YELLOW}LED槽位检测遇到问题，使用默认配置${NC}"
+        DISK_LEDS=("disk1" "disk2" "disk3" "disk4" "disk5" "disk6" "disk7" "disk8")
     fi
     
     # 使用HCTL方式检测硬盘映射

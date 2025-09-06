@@ -277,10 +277,12 @@ manage_disks() {
     case $choice in
         1)
             echo -e "${CYAN}启动智能硬盘状态显示...${NC}"
-            if [[ -x "$SCRIPTS_DIR/smart_disk_activity.sh" ]]; then
-                "$SCRIPTS_DIR/smart_disk_activity.sh"
+            echo -e "${BLUE}智能硬盘活动状态监控 (HCTL版)${NC}"
+            echo -e "${CYAN}正在使用HCTL智能检测硬盘...${NC}"
+            if [[ -x "$HCTL_SCRIPT" ]]; then
+                "$HCTL_SCRIPT"
             else
-                echo -e "${YELLOW}智能硬盘状态脚本不存在${NC}"
+                echo -e "${YELLOW}HCTL智能硬盘状态脚本不存在${NC}"
             fi
             ;;
         2)
