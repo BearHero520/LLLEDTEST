@@ -148,25 +148,28 @@ detect_available_leds() {
     return 0
 }
 
-# 获取硬盘状态 (使用hdparm)
+# 获取硬盘状态 (使用hdparm，优先检测硬盘可访问性)
 get_disk_status() {
     local disk="$1"
-    local status="unknown"
     
-    # 检查硬盘是否存在
+    # 首先检查设备文件是否存在
     if [[ ! -b "$disk" ]]; then
         echo "not_found"
         return 1
     fi
     
-    # 使用hdparm检查硬盘状态
+    # 使用hdparm检查硬盘状态 - 这是关键的可访问性测试
     local hdparm_output
-    hdparm_output=$(sudo hdparm -C "$disk" 2>&1)
+    hdparm_output=$(timeout 10 hdparm -C "$disk" 2>&1)
     local hdparm_exit_code=$?
     
+    # hdparm超时或失败，说明硬盘无响应（可能已拔出）
     if [[ $hdparm_exit_code -ne 0 ]]; then
-        # hdparm失败，可能是设备不存在或权限问题
         if [[ "$hdparm_output" =~ "No such file or directory" ]]; then
+            echo "not_found"
+            return 1
+        elif [[ "$hdparm_output" =~ "Input/output error" ]] || [[ $hdparm_exit_code -eq 124 ]]; then
+            # I/O错误或超时，说明硬盘可能已拔出但设备文件还在
             echo "not_found"
             return 1
         else
@@ -175,25 +178,28 @@ get_disk_status() {
         fi
     fi
     
-    # 解析hdparm输出
+    # 成功获取hdparm输出，解析硬盘状态
     if [[ "$hdparm_output" =~ "drive state is:"[[:space:]]*([^[:space:]]+) ]]; then
         local drive_state="${BASH_REMATCH[1]}"
         case "$drive_state" in
             "active/idle"|"active"|"idle")
                 echo "active"
+                return 0
                 ;;
             "standby"|"sleeping")
                 echo "standby"
+                return 0
                 ;;
             *)
                 echo "unknown"
+                return 0
                 ;;
         esac
     else
+        # hdparm返回成功但无法解析状态，可能是硬盘问题
         echo "unknown"
+        return 0
     fi
-    
-    return 0
 }
 
 # 加载HCTL映射
@@ -325,42 +331,40 @@ update_disk_leds() {
     # 获取当前可用硬盘
     get_available_disks
     
-    # 遍历所有映射的硬盘
-    for disk in "${AVAILABLE_DISKS[@]}"; do
+    # 首先处理所有映射中的硬盘（包括可能已拔出的）
+    for disk in "${!DISK_LED_MAP[@]}"; do
         local led="${DISK_LED_MAP[$disk]:-}"
         
         # 如果没有LED映射，跳过
-        if [[ -z "$led" ]]; then
+        if [[ -z "$led" || "$led" == "none" ]]; then
             log_message "DEBUG" "硬盘 $disk 没有LED映射"
             continue
         fi
         
-        # 获取硬盘状态
+        # 通过获取硬盘状态来判断硬盘是否存在和可用
         local disk_status
         disk_status=$(get_disk_status "$disk")
         local status_result=$?
         
-        # 处理硬盘状态检查结果
+        log_message "DEBUG" "硬盘 $disk 状态检测: status=$disk_status, result=$status_result"
+        
+        # 如果无法获取状态，说明硬盘已经拔出或无响应
         if [[ $status_result -ne 0 ]]; then
-            # 硬盘检查失败
             case "$disk_status" in
-                "not_found")
-                    log_message "WARN" "硬盘 $disk 不存在，触发HCTL重映射"
-                    # 触发HCTL重映射
-                    if refresh_hctl_mapping; then
-                        log_message "INFO" "HCTL重映射成功，将在下次循环中应用"
-                        continue
-                    else
-                        log_message "ERROR" "HCTL重映射失败"
-                        ((error_count++))
-                        continue
-                    fi
-                    ;;
-                "error")
-                    log_message "ERROR" "硬盘 $disk 状态检查错误"
-                    # 设置错误状态LED (关闭)
+                "not_found"|"error")
+                    log_message "WARN" "硬盘 $disk 无法访问 (状态: $disk_status)，关闭LED $led"
                     set_led_status "$led" "off"
-                    ((error_count++))
+                    # 从映射中移除无法访问的硬盘
+                    unset DISK_LED_MAP["$disk"]
+                    unset DISK_STATUS_CACHE["$disk"]
+                    unset DISK_HCTL_MAP["$disk"]
+                    ((updated_count++))
+                    
+                    # 如果是not_found，触发HCTL重映射
+                    if [[ "$disk_status" == "not_found" ]]; then
+                        log_message "INFO" "触发HCTL重映射以检测硬盘变化"
+                        refresh_hctl_mapping >/dev/null 2>&1 &  # 后台执行，不阻塞
+                    fi
                     continue
                     ;;
             esac

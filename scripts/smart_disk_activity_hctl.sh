@@ -35,16 +35,7 @@ declare -A CURRENT_HCTL_MAP
 
 # 参数解析
 UPDATE_MAPPING=false
-SAVE_CON    echo -e "${GREEN}智能硬盘活动状态设置完成${NC}"
-    echo -e "${YELLOW}LED状态说明 (v3.0.0 基于hdparm状态):${NC}"
-    echo "  ⚪ 白色亮光 - 活跃/空闲状态 (active/idle) - 255,255,255"
-    echo "  ⚪ 白色微亮 - 待机状态 (standby) - 128,128,128"
-    echo "  ⚪ 微弱光点 - 深度睡眠 (sleeping) - 64,64,64"
-    echo "  ⚫ LED关闭 - 硬盘错误或离线状态"
-    echo -e "${CYAN}  💡 基于hdparm电源管理，精确反映硬盘状态${NC}"
-    echo
-    echo -e "${BLUE}检测到 ${#DISKS[@]} 个硬盘，成功映射到 ${#DISK_LEDS[@]} 个LED槽位${NC}"
-    echo -e "${GREEN}✓ 所有硬盘LED状态已根据当前状态重新设置${NC}"
+SAVE_CONFIG=false
 INTERACTIVE_MODE=false
 
 # 解析命令行参数
@@ -494,42 +485,61 @@ check_disk_activity() {
     fi
 }
 
-# 检测硬盘是否休眠 (使用hdparm)
+# 检测硬盘是否休眠 (使用hdparm，优先检测硬盘可访问性)
 check_disk_sleep() {
     local device="$1"
     
     # 移除/dev/前缀，确保设备路径正确
     local device_path="/dev/$(basename "$device")"
     
-    # 方法1: 使用hdparm检查电源状态 (最准确)
+    # 首先检查设备文件是否存在
+    if [[ ! -b "$device_path" ]]; then
+        echo "OFFLINE"
+        return 1
+    fi
+    
+    # 方法1: 使用hdparm检查电源状态 (最准确，带超时)
     if command -v hdparm >/dev/null 2>&1; then
-        local hdparm_output=$(hdparm -C "$device_path" 2>/dev/null)
-        if [[ $? -eq 0 ]]; then
+        local hdparm_output
+        hdparm_output=$(timeout 10 hdparm -C "$device_path" 2>/dev/null)
+        local hdparm_exit_code=$?
+        
+        # hdparm成功执行
+        if [[ $hdparm_exit_code -eq 0 ]]; then
             # 解析hdparm输出
             if [[ "$hdparm_output" =~ drive\ state\ is:[[:space:]]*([^[:space:]]+) ]]; then
                 local drive_state="${BASH_REMATCH[1]}"
                 case "$drive_state" in
                     "active/idle"|"active"|"idle")
                         echo "AWAKE"
-                        return
+                        return 0
                         ;;
                     "standby")
                         echo "STANDBY"
-                        return
+                        return 0
                         ;;
                     "sleeping")
                         echo "SLEEPING"
-                        return
+                        return 0
                         ;;
                     "unknown")
                         echo "UNKNOWN"
-                        return
+                        return 0
                         ;;
                     *)
                         echo "UNKNOWN"
-                        return
+                        return 0
                         ;;
                 esac
+            fi
+        else
+            # hdparm失败或超时，可能硬盘已拔出
+            if [[ $hdparm_exit_code -eq 124 ]]; then
+                echo "OFFLINE"  # 超时
+                return 1
+            else
+                echo "OFFLINE"  # 其他错误
+                return 1
             fi
         fi
     fi
@@ -571,6 +581,12 @@ set_disk_led_by_activity() {
     
     # 根据hdparm状态设置LED
     case "$sleep_status" in
+        "OFFLINE")
+            # 硬盘离线/拔出 - 关闭LED
+            echo "  -> 硬盘离线: LED关闭 (可能已拔出)"
+            "$UGREEN_CLI" "$led_name" -off
+            return
+            ;;
         "STANDBY")
             # 待机状态 - 淡白色 (主轴停转，但可快速唤醒)
             if [[ -n "$DISK_COLOR_STANDBY" ]]; then
