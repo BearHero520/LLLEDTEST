@@ -510,7 +510,9 @@ main_loop() {
 
 # 守护进程启动函数 - 严格的三步初始化流程
 start_daemon() {
-    log_message "INFO" "启动LLLED后台监控服务 v$LLLED_VERSION"
+    local background_mode="${1:-false}"
+    
+    log_message "INFO" "启动LLLED后台监控服务 v$LLLED_VERSION (后台模式: $background_mode)"
     
     # 检查是否已经运行
     if [[ -f "$PID_FILE" ]]; then
@@ -518,6 +520,7 @@ start_daemon() {
         old_pid=$(cat "$PID_FILE" 2>/dev/null)
         if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
             log_message "ERROR" "服务已经运行，PID: $old_pid"
+            echo "服务已经运行，PID: $old_pid"
             exit 1
         else
             log_message "WARN" "清理过期的PID文件"
@@ -525,6 +528,36 @@ start_daemon() {
         fi
     fi
     
+    # 如果是后台模式，启动新进程并退出
+    if [[ "$background_mode" == "true" ]]; then
+        log_message "INFO" "启动后台守护进程..."
+        echo "启动后台守护进程..."
+        
+        # 启动后台进程
+        nohup "$0" "_daemon_process" </dev/null >/dev/null 2>&1 &
+        local daemon_pid=$!
+        
+        # 等待一下确保进程启动
+        sleep 2
+        
+        # 检查进程是否成功启动
+        if kill -0 "$daemon_pid" 2>/dev/null; then
+            echo "✓ 后台服务启动成功，PID: $daemon_pid"
+            log_message "INFO" "后台服务启动成功，PID: $daemon_pid"
+            return 0
+        else
+            echo "✗ 后台服务启动失败"
+            log_message "ERROR" "后台服务启动失败"
+            return 1
+        fi
+    fi
+    
+    # 直接启动模式（由 _daemon_process 调用）
+    _start_daemon_direct
+}
+
+# 直接启动守护进程（不fork）
+_start_daemon_direct() {
     # 写入PID文件
     echo $$ > "$PID_FILE"
     
@@ -663,7 +696,11 @@ show_help() {
 # 主程序入口
 case "${1:-start}" in
     start)
-        start_daemon
+        start_daemon true  # 后台模式启动
+        ;;
+    _daemon_process)
+        # 内部调用：直接启动守护进程
+        _start_daemon_direct
         ;;
     stop)
         stop_daemon
