@@ -218,25 +218,40 @@ detect_disk_mapping_hctl() {
             continue
         fi
         
-        # 分配LED
-        if [[ $successful_mappings -lt ${#DISK_LEDS[@]} ]]; then
-            local assigned_led="${DISK_LEDS[$successful_mappings]}"
-            
+        # 分配LED - 根据HCTL地址对应到正确的物理位置
+        # HCTL格式为 host:channel:target:lun，我们主要关注host值
+        local hctl_host="${hctl%%:*}"  # 提取HCTL的host部分
+        
+        # 根据HCTL host值计算对应的LED位置
+        # HCTL host从0开始，disk LED从1开始
+        local led_position=$((hctl_host + 1))
+        local target_led="disk${led_position}"
+        
+        # 检查计算出的LED是否在可用列表中
+        local led_available=false
+        for available_led in "${DISK_LEDS[@]}"; do
+            if [[ "$available_led" == "$target_led" ]]; then
+                led_available=true
+                break
+            fi
+        done
+        
+        if [[ "$led_available" == "true" ]]; then
             # 保存映射信息
             DISKS+=("$disk_device")
-            DISK_LED_MAP["$disk_device"]="$assigned_led"
+            DISK_LED_MAP["$disk_device"]="$target_led"
             DISK_HCTL_MAP["$disk_device"]="$hctl"
             DISK_INFO["$disk_device"]="$serial|$model|$size"
             
             # 保存到当前HCTL映射 (用于配置文件保存)
-            CURRENT_HCTL_MAP["$disk_device"]="$hctl|$assigned_led|${serial:-N/A}|${model:-Unknown}|${size:-N/A}"
+            CURRENT_HCTL_MAP["$disk_device"]="$hctl|$target_led|${serial:-N/A}|${model:-Unknown}|${size:-N/A}"
             
-            echo -e "${GREEN}✓ 映射成功: $disk_device (HCTL: $hctl) -> $assigned_led${NC}"
+            echo -e "${GREEN}✓ 映射成功: $disk_device (HCTL: $hctl) -> $target_led${NC}"
             echo -e "  序列号: ${serial:-N/A} | 型号: ${model:-Unknown} | 大小: ${size:-N/A}"
             
             ((successful_mappings++))
         else
-            echo -e "${YELLOW}! LED不足，无法映射: $disk_device${NC}"
+            echo -e "${YELLOW}! LED位置 $target_led 不可用，无法映射: $disk_device (HCTL: $hctl)${NC}"
         fi
         
     done <<< "$hctl_info"
