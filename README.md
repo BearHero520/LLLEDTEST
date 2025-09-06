@@ -288,6 +288,43 @@ sudo /opt/ugreen-led-controller/ugreen_leds_cli disk1 -color "255 0 0" -on
 -   ✅ 优化的硬盘状态监控
 -   ✅ 智能错误处理和恢复
 
+## 🔧 **故障排除**
+
+### LED控制功能失效
+如果遇到LED控制不工作的问题，请按以下步骤排查：
+
+#### 1. 快速测试
+```bash
+# 运行快速LED功能测试
+sudo /opt/ugreen-led-controller/quick_led_test.sh
+```
+
+#### 2. 检查系统环境
+```bash
+# 检查i2c模块
+lsmod | grep i2c_dev
+
+# 如果未加载，手动加载
+sudo modprobe i2c-dev
+
+# 检查LED状态
+sudo /opt/ugreen-led-controller/ugreen_leds_cli all -status
+```
+
+#### 3. 手动控制测试
+```bash
+# 测试LED控制
+sudo /opt/ugreen-led-controller/ugreen_leds_cli all -on
+sudo /opt/ugreen-led-controller/ugreen_leds_cli all -off
+```
+
+### 常见问题
+- **权限问题**: 确保使用 `sudo` 运行所有LED控制命令
+- **硬件兼容性**: 确认使用的是支持的UGREEN NAS型号
+- **模块加载**: 确保 `i2c-dev` 模块已正确加载
+
+详细故障排除指南请参考: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+
 ## 🤝 **贡献和支持**
 
 ### 📞 **获取帮助**

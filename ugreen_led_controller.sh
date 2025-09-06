@@ -102,7 +102,49 @@ show_system_info() {
     echo
 }
 
-# 设置灯光功能
+# 获取可用LED列表
+get_available_leds() {
+    local all_status=$($UGREEN_CLI all -status 2>/dev/null)
+    local available_leds=()
+    
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^([^:]+):[[:space:]]*status[[:space:]]*=[[:space:]]*([^,]+) ]]; then
+            available_leds+=("${BASH_REMATCH[1]}")
+        fi
+    done <<< "$all_status"
+    
+    echo "${available_leds[@]}"
+}
+
+# 设置所有LED颜色和亮度
+set_all_leds() {
+    local color="$1"
+    local brightness="$2"
+    local mode="$3"  # -on, -off, 或留空
+    
+    local available_leds=($(get_available_leds))
+    
+    if [[ ${#available_leds[@]} -eq 0 ]]; then
+        echo -e "${YELLOW}无法检测LED，使用备用方法${NC}"
+        # 备用方法：尝试常见LED
+        for led in power netdev disk1 disk2 disk3 disk4 disk5 disk6 disk7 disk8; do
+            if [[ -n "$mode" ]]; then
+                "$UGREEN_CLI" "$led" -color $color -brightness $brightness $mode 2>/dev/null
+            else
+                "$UGREEN_CLI" "$led" -color $color -brightness $brightness 2>/dev/null
+            fi
+        done
+    else
+        echo -e "${GREEN}控制 ${#available_leds[@]} 个LED: ${available_leds[*]}${NC}"
+        for led in "${available_leds[@]}"; do
+            if [[ -n "$mode" ]]; then
+                "$UGREEN_CLI" "$led" -color $color -brightness $brightness $mode 2>/dev/null
+            else
+                "$UGREEN_CLI" "$led" -color $color -brightness $brightness 2>/dev/null
+            fi
+        done
+    fi
+}
 manage_lights() {
     echo -e "${CYAN}LED灯光设置${NC}"
     echo
@@ -135,16 +177,14 @@ manage_lights() {
         3)
             echo -e "${CYAN}启用节能模式...${NC}"
             # 低亮度白光
-            for led in power netdev disk1 disk2 disk3 disk4; do
-                "$UGREEN_CLI" "$led" -color "255 255 255" -brightness 16 2>/dev/null
-            done
+            set_all_leds "255 255 255" "16" "-on"
+            echo -e "${GREEN}✓ 节能模式已启用 (低亮度白光)${NC}"
             ;;
         4)
             echo -e "${CYAN}启用夜间模式...${NC}"
             # 暗红光
-            for led in power netdev disk1 disk2 disk3 disk4; do
-                "$UGREEN_CLI" "$led" -color "64 0 0" -brightness 8 2>/dev/null
-            done
+            set_all_leds "64 0 0" "8" "-on"
+            echo -e "${GREEN}✓ 夜间模式已启用 (暗红光)${NC}"
             ;;
         5)
             echo -e "${CYAN}启动彩虹效果...${NC}"
