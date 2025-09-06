@@ -4,6 +4,27 @@
 
 2025 年 9 月 6 日
 
+## 最新修复 (2025-09-06 - 颜色设置修复)
+
+### 问题描述
+脚本执行时出现颜色设置错误：
+- `std::invalid_argument: stoi` 错误
+- LED 颜色设置失效
+- 重复函数调用导致的异常退出
+
+### 修复内容
+1. **移除重复函数调用**: 删除了第460行错误放置的 `main "$@"` 调用
+2. **修复颜色参数格式**: 给所有颜色变量使用添加引号
+   - `$DISK_COLOR_STANDBY` → `"$DISK_COLOR_STANDBY"`
+   - `$DISK_COLOR_ACTIVE` → `"$DISK_COLOR_ACTIVE"` 
+   - `$DISK_COLOR_ERROR` → `"$DISK_COLOR_ERROR"`
+
+### 修复结果
+- ✅ 消除了 `std::invalid_argument` 错误
+- ✅ LED 颜色设置正常工作
+- ✅ 脚本完整执行流程恢复
+- ✅ 硬盘状态检测和 LED 设置完全功能化
+
 ## 主要更改
 
 ### 1. 功能重新定义
