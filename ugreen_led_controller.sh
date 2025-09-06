@@ -288,7 +288,10 @@ manage_disks() {
         2)
             echo -e "${CYAN}启动实时硬盘活动监控...${NC}"
             echo "按 Ctrl+C 停止监控"
-            if [[ -x "$SCRIPTS_DIR/disk_status_leds.sh" ]]; then
+            if [[ -x "$SCRIPTS_DIR/smart_disk_activity_hctl.sh" ]]; then
+                # 使用HCTL版本进行实时监控
+                "$SCRIPTS_DIR/smart_disk_activity_hctl.sh"
+            elif [[ -x "$SCRIPTS_DIR/disk_status_leds.sh" ]]; then
                 "$SCRIPTS_DIR/disk_status_leds.sh"
             else
                 echo -e "${YELLOW}硬盘活动监控脚本不存在${NC}"
