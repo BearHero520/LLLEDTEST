@@ -22,6 +22,7 @@ GLOBAL_CONFIG="$CONFIG_DIR/global_config.conf"
 
 # 全局变量
 declare -A DISK_LED_MAP
+declare -A DISK_HCTL_MAP
 declare -A DISK_STATUS_CACHE
 declare -A LED_STATUS_CACHE
 AVAILABLE_LEDS=()
