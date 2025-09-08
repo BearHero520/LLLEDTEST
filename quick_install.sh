@@ -19,7 +19,7 @@ INSTALL_DIR="/opt/ugreen-led-controller"
 LOG_DIR="/var/log/llled"
 
 # 全局版本号
-LLLED_VERSION="3.3.0"
+LLLED_VERSION="3.3.1"
 
 # 支持的UGREEN设备列表
 SUPPORTED_MODELS=(
@@ -145,14 +145,33 @@ cleanup_old_version
 # 安装依赖
 log_install "安装必要依赖..."
 if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -qq && apt-get install -y wget curl i2c-tools smartmontools bc sysstat util-linux lsblk hdparm -qq
+    if ! apt-get update -qq; then
+        log_install "WARNING: apt-get update 失败，继续尝试安装依赖..."
+    fi
+    if ! apt-get install -y wget curl i2c-tools smartmontools bc sysstat util-linux hdparm -qq; then
+        log_install "ERROR: 依赖安装失败，请检查网络连接和权限"
+        handle_error 100 "依赖包安装失败"
+    fi
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y wget curl i2c-tools smartmontools bc sysstat util-linux lsblk hdparm -q
+    if ! yum install -y wget curl i2c-tools smartmontools bc sysstat util-linux hdparm -q; then
+        log_install "ERROR: 依赖安装失败，请检查网络连接和权限"
+        handle_error 100 "依赖包安装失败"
+    fi
 elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y wget curl i2c-tools smartmontools bc sysstat util-linux lsblk hdparm -q
+    if ! dnf install -y wget curl i2c-tools smartmontools bc sysstat util-linux hdparm -q; then
+        log_install "ERROR: 依赖安装失败，请检查网络连接和权限"
+        handle_error 100 "依赖包安装失败"
+    fi
 else
-    log_install "WARNING: 请手动安装: wget curl i2c-tools smartmontools bc sysstat util-linux"
+    log_install "WARNING: 未检测到包管理器，请手动安装: wget curl i2c-tools smartmontools bc sysstat util-linux hdparm"
 fi
+
+# 验证关键命令是否可用
+for cmd in wget curl lsblk smartctl; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        log_install "WARNING: 命令 $cmd 不可用，可能影响功能"
+    fi
+done
 
 # 加载i2c模块
 modprobe i2c-dev 2>/dev/null
