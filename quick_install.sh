@@ -329,6 +329,9 @@ fi
 # 智能配置生成 - 基于HCTL和LED检测
 log_install "开始智能配置生成..."
 
+# 临时禁用严格错误处理，因为检测过程中某些命令可能正常失败
+set +e
+
 # 1. 先检测可用LED
 log_install "检测可用LED..."
 if [[ -x "ugreen_leds_cli" ]]; then
@@ -467,7 +470,8 @@ for i in "${!hctl_disks[@]}"; do
         # 写入映射配置
         echo "HCTL_MAPPING[$disk_device]=\"$hctl_info|$led_name|$model|$size\"" >> "config/hctl_mapping.conf"
         
-        ((mapped_count++))
+        # 安全的计数器递增
+        mapped_count=$((mapped_count + 1))
         log_install "映射: $disk_device -> $led_name (HCTL: ${hctl_info%|*})"
     else
         log_install "WARNING: 硬盘 $disk_device 无对应LED，跳过映射"
@@ -507,6 +511,9 @@ if [[ $mapped_count -lt ${#hctl_disks[@]} ]]; then
     log_install "WARNING: 有 $((${#hctl_disks[@]} - mapped_count)) 个硬盘无对应LED"
 fi
 echo ""
+
+# 重新启用严格错误处理
+set -e
 
 # 安装systemd服务
 log_install "安装systemd服务..."
