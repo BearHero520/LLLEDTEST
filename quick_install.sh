@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # 绿联LED控制工具 - 一键安装脚本 (修复版)
-# 版本: 3.3.0
+# 版本: 3.4.0
 # 更新时间: 2025-09-08
-# 修复: 添加超时保护和错误处理机制
+# 修复: 添加超时保护和错误处理机制，修复下载计数器问题
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,7 +19,7 @@ INSTALL_DIR="/opt/ugreen-led-controller"
 LOG_DIR="/var/log/llled"
 
 # 全局版本号
-LLLED_VERSION="3.3.6"
+LLLED_VERSION="3.4.0"
 
 # 支持的UGREEN设备列表
 SUPPORTED_MODELS=(
@@ -217,7 +217,7 @@ for file in "${files[@]}"; do
     # 添加时间戳参数防止缓存，并禁用缓存
     if wget --no-cache --no-cookies -q "${GITHUB_RAW_URL}/${file}?t=${TIMESTAMP}" -O "$file"; then
         echo -e "${GREEN}✓${NC}"
-        ((download_success++))
+        download_success=$((download_success + 1))
     else
         echo -e "${RED}✗${NC}"
         log_install "WARNING: 无法下载 $file"
@@ -301,7 +301,7 @@ elif [[ "$1" == "test" ]]; then
         echo "LED测试脚本不存在"
     fi
 else
-    echo "LLLED v3.3.1 - 绿联LED控制系统"
+    echo "LLLED v3.3.6 - 绿联LED控制系统"
     echo ""
     echo "用法: sudo LLLED [命令]"
     echo ""
