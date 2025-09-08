@@ -1071,6 +1071,10 @@ update_disk_leds() {
     if [[ $updated_count -gt 0 ]]; then
         log_message "INFO" "硬盘LED更新完成，更新了 $updated_count 个LED"
     else
+        # 每10次循环记录一次无变化状态，避免日志过多
+        if [[ $(($(date +%s) % 300)) -lt 30 ]]; then  # 大约每5分钟记录一次
+            log_message "INFO" "硬盘LED状态无变化，所有硬盘状态稳定"
+        fi
         log_message "DEBUG" "硬盘LED状态无变化，跳过更新"
     fi
     
@@ -1106,16 +1110,20 @@ main_loop() {
     local last_system_led_update=0
     local system_led_interval=60  # 系统LED每分钟更新一次
     local last_status_log=0
-    local status_log_interval=300  # 每5分钟记录一次状态
+    local status_log_interval=120  # 改为2分钟记录一次状态
+    local loop_count=0
     
     while [[ "$DAEMON_RUNNING" == "true" ]]; do
         local current_time=$(date +%s)
+        ((loop_count++))
         
         # 主要任务：基于hdparm状态更新硬盘LED
+        log_message "DEBUG" "执行第 $loop_count 次硬盘LED检测..."
         update_disk_leds
         
         # 定期更新系统LED（降低频率）
         if [[ $((current_time - last_system_led_update)) -gt $system_led_interval ]]; then
+            log_message "DEBUG" "更新系统LED状态..."
             update_power_led
             update_network_led
             last_system_led_update=$current_time
@@ -1123,15 +1131,18 @@ main_loop() {
         
         # 定期记录状态日志（减少日志量）
         if [[ $((current_time - last_status_log)) -gt $status_log_interval ]]; then
-            log_message "INFO" "状态监控正常 - 硬盘映射: ${#DISK_LED_MAP[@]}个, LED总数: ${#AVAILABLE_LEDS[@]}个"
+            log_message "INFO" "状态监控正常 - 硬盘映射: ${#DISK_LED_MAP[@]}个, LED总数: ${#AVAILABLE_LEDS[@]}个, 循环次数: $loop_count"
             last_status_log=$current_time
         fi
+        
+        # 每次循环都记录简单状态（但使用DEBUG级别）
+        log_message "DEBUG" "循环 $loop_count 完成，等待 ${CHECK_INTERVAL} 秒..."
         
         # 30秒等待
         sleep "$CHECK_INTERVAL"
     done
     
-    log_message "INFO" "主监控循环结束"
+    log_message "INFO" "主监控循环结束，总共执行 $loop_count 次循环"
 }
 
 # 守护进程启动函数 - 严格的三步初始化流程
