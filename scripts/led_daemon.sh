@@ -562,13 +562,6 @@ detect_available_leds() {
                 fi
             fi
         done < "$CONFIG_DIR/led_mapping.conf"
-    fi
-                    log_message "INFO" "确认硬盘LED: $led_name"
-                else
-                    log_message "WARN" "硬盘LED $led_name 检测失败"
-                fi
-            fi
-        done < "$CONFIG_DIR/led_mapping.conf"
     else
         # 如果没有配置文件，动态探测硬盘LED（最多探测到disk15）
         log_message "INFO" "配置文件不存在，动态探测硬盘LED..."
