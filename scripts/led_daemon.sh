@@ -795,8 +795,8 @@ load_hctl_mapping() {
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         [[ -z "${line// }" ]] && continue
         
-        # 解析HCTL_MAPPING行
-        if [[ "$line" =~ ^HCTL_MAPPING\[([^\]]+)\]=\"?([^\"]+)\"?$ ]]; then
+        # 解析HCTL_MAPPING行 - 修复正则表达式以正确处理引号
+        if [[ "$line" =~ ^HCTL_MAPPING\[([^\]]+)\]=\"([^\"]+)\"$ ]]; then
             local disk_device="${BASH_REMATCH[1]}"
             local mapping_info="${BASH_REMATCH[2]}"
             
