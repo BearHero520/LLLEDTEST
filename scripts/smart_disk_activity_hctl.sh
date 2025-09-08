@@ -801,6 +801,13 @@ main() {
         return 1
     fi
     
+    # 如果指定了更新映射或保存配置，则保存配置文件
+    if [[ "$UPDATE_MAPPING" == "true" || "$SAVE_CONFIG" == "true" ]]; then
+        echo -e "${CYAN}保存HCTL映射配置...${NC}"
+        save_hctl_mapping_config
+        echo -e "${GREEN}✓ HCTL映射配置已保存到: $HCTL_CONFIG${NC}"
+    fi
+    
     echo -e "${CYAN}=== 硬盘映射结果 ===${NC}"
     for disk in "${DISKS[@]}"; do
         local led_name="${DISK_LED_MAP[$disk]}"

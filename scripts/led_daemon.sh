@@ -14,6 +14,11 @@ PID_FILE="/var/run/${SERVICE_NAME}.pid"
 LOG_FILE="$LOG_DIR/${SERVICE_NAME}.log"
 UGREEN_CLI="$SCRIPT_DIR/ugreen_leds_cli"
 
+# 配置文件路径
+HCTL_CONFIG="$CONFIG_DIR/hctl_mapping.conf"
+DISK_CONFIG="$CONFIG_DIR/disk_mapping.conf"
+GLOBAL_CONFIG="$CONFIG_DIR/global_config.conf"
+
 # 全局变量
 declare -A DISK_LED_MAP
 declare -A DISK_STATUS_CACHE
@@ -23,6 +28,7 @@ CHECK_INTERVAL=5
 
 # 创建必要目录
 mkdir -p "$LOG_DIR"
+mkdir -p "$CONFIG_DIR"
 
 # 日志函数
 log_message() {
@@ -480,6 +486,7 @@ load_hctl_mapping() {
     
     if [[ ! -f "$HCTL_CONFIG" ]]; then
         log_message "WARN" "HCTL配置文件不存在: $HCTL_CONFIG"
+        log_message "DEBUG" "期望的配置文件完整路径: $HCTL_CONFIG"
         return 1
     fi
     
@@ -517,14 +524,30 @@ load_hctl_mapping() {
 refresh_hctl_mapping() {
     log_message "INFO" "重新生成HCTL硬盘映射配置..."
     
+    # 确保配置目录存在
+    mkdir -p "$CONFIG_DIR"
+    
     # 调用智能硬盘状态脚本来生成HCTL配置
     local hctl_script="$SCRIPT_DIR/scripts/smart_disk_activity_hctl.sh"
     if [[ -x "$hctl_script" ]]; then
         log_message "INFO" "调用HCTL检测脚本生成配置: $hctl_script"
+        log_message "DEBUG" "执行命令: $hctl_script --update-mapping --save-config"
+        log_message "DEBUG" "目标配置文件: $HCTL_CONFIG"
         
         # 执行脚本来生成HCTL映射配置（添加30秒超时保护）
-        if timeout 30 "$hctl_script" >/dev/null 2>&1; then
+        local hctl_output
+        if hctl_output=$(timeout 30 "$hctl_script" --update-mapping --save-config 2>&1); then
             log_message "INFO" "HCTL配置生成成功"
+            log_message "DEBUG" "HCTL脚本输出: $hctl_output"
+            
+            # 检查配置文件是否真的生成了
+            if [[ -f "$HCTL_CONFIG" ]]; then
+                log_message "INFO" "确认配置文件已生成: $HCTL_CONFIG"
+                local file_size=$(stat -c%s "$HCTL_CONFIG" 2>/dev/null || echo "0")
+                log_message "DEBUG" "配置文件大小: $file_size 字节"
+            else
+                log_message "WARN" "配置文件未生成: $HCTL_CONFIG"
+            fi
             
             # 重新加载生成的映射配置
             if load_hctl_mapping; then
@@ -537,6 +560,7 @@ refresh_hctl_mapping() {
             fi
         else
             log_message "ERROR" "HCTL配置生成失败或超时"
+            log_message "ERROR" "HCTL脚本错误输出: $hctl_output"
             return 1
         fi
     else
