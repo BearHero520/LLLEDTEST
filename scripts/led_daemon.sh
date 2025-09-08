@@ -15,6 +15,7 @@ LOG_FILE="$LOG_DIR/${SERVICE_NAME}.log"
 UGREEN_CLI="$SCRIPT_DIR/ugreen_leds_cli"
 
 # 配置文件路径
+LED_CONFIG="$CONFIG_DIR/led_mapping.conf"
 HCTL_CONFIG="$CONFIG_DIR/hctl_mapping.conf"
 DISK_CONFIG="$CONFIG_DIR/disk_mapping.conf"
 GLOBAL_CONFIG="$CONFIG_DIR/global_config.conf"
@@ -22,22 +23,37 @@ GLOBAL_CONFIG="$CONFIG_DIR/global_config.conf"
 # 全局变量
 declare -A DISK_LED_MAP
 declare -A DISK_STATUS_CACHE
+declare -A LED_STATUS_CACHE
 AVAILABLE_LEDS=()
+actual_disk_leds=()  # 存储检测到的硬盘LED
 DAEMON_RUNNING=true
-CHECK_INTERVAL=5
+CHECK_INTERVAL=30  # 改为30秒检测一次
 
 # 创建必要目录
 mkdir -p "$LOG_DIR"
 mkdir -p "$CONFIG_DIR"
 
-# 日志函数
+# 日志函数 - 简化版本
 log_message() {
     local level="$1"
     local message="$2"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
     
-    if [[ "${DEBUG_MODE:-false}" == "true" ]]; then
+    # 只记录重要信息，减少调试日志
+    case "$level" in
+        "ERROR"|"WARN"|"INFO")
+            echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+            ;;
+        "DEBUG")
+            # 只在DEBUG_MODE开启时记录
+            if [[ "${DEBUG_MODE:-false}" == "true" ]]; then
+                echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+            fi
+            ;;
+    esac
+    
+    # 控制台输出（如果是直接运行）
+    if [[ "${DEBUG_MODE:-false}" == "true" || "$level" != "DEBUG" ]]; then
         echo "[$timestamp] [$level] $message"
     fi
 }
@@ -50,12 +66,58 @@ handle_signal() {
     exit 0
 }
 
+# 清除日志文件
+clear_logs() {
+    if [[ -f "$LOG_FILE" ]]; then
+        echo "清除日志文件: $LOG_FILE"
+        > "$LOG_FILE"  # 清空文件内容
+        log_message "INFO" "日志文件已清除"
+        echo "日志已清除"
+    else
+        echo "日志文件不存在: $LOG_FILE"
+    fi
+}
+
 # 检查root权限
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         log_message "ERROR" "需要root权限运行后台服务"
         exit 1
     fi
+}
+
+# 加载配置文件
+load_configs() {
+    # 加载LED映射配置
+    if [[ -f "$LED_CONFIG" ]]; then
+        source "$LED_CONFIG" 2>/dev/null || true
+        log_message "INFO" "已加载LED映射配置: $LED_CONFIG"
+    else
+        log_message "WARN" "LED映射配置文件不存在: $LED_CONFIG"
+    fi
+    
+    # 加载全局配置
+    if [[ -f "$GLOBAL_CONFIG" ]]; then
+        source "$GLOBAL_CONFIG" 2>/dev/null || true
+        log_message "DEBUG" "已加载全局配置: $GLOBAL_CONFIG"
+    else
+        log_message "WARN" "全局配置文件不存在: $GLOBAL_CONFIG"
+    fi
+    
+    # 设置默认值
+    CHECK_INTERVAL=${CHECK_INTERVAL:-30}
+    SYSTEM_LED_UPDATE_INTERVAL=${SYSTEM_LED_UPDATE_INTERVAL:-30}
+    DEBUG_MODE=${DEBUG_MODE:-false}
+    DEFAULT_BRIGHTNESS=${DEFAULT_BRIGHTNESS:-64}
+    LOW_BRIGHTNESS=${LOW_BRIGHTNESS:-32}
+    HIGH_BRIGHTNESS=${HIGH_BRIGHTNESS:-128}
+    
+    # 设置颜色配置
+    DISK_COLOR_ACTIVE=${DISK_COLOR_ACTIVE:-"255 255 255"}
+    DISK_COLOR_STANDBY=${DISK_COLOR_STANDBY:-"128 128 128"}
+    POWER_COLOR_ON=${POWER_COLOR_ON:-"128 128 128"}
+    
+    log_message "INFO" "配置加载完成 - 检查间隔: ${CHECK_INTERVAL}s"
 }
 
 # 检查LED控制程序
@@ -71,31 +133,6 @@ check_led_cli() {
     fi
     
     return 0
-}
-
-# 检测可用LED (使用详细版本)
-# detect_available_leds 函数在下方实现，此处删除重复定义
-
-# 主循环
-main_loop() {
-    log_message "INFO" "主监控循环启动"
-    local loop_count=0
-    local max_loops=720  # 1小时后自动重启
-    
-    while [[ "$DAEMON_RUNNING" == "true" && $loop_count -lt $max_loops ]]; do
-        # 简单的LED状态更新
-        for led in "${AVAILABLE_LEDS[@]}"; do
-            if [[ "$led" =~ ^disk[0-9]+$ ]]; then
-                # 硬盘LED简单显示
-                timeout 2 "$UGREEN_CLI" "$led" -color 128 128 128 -brightness 32 >/dev/null 2>&1 || true
-            fi
-        done
-        
-        ((loop_count++))
-        sleep "$CHECK_INTERVAL"
-    done
-    
-    log_message "INFO" "主循环结束"
 }
 
 # 启动守护进程（后台模式）
@@ -215,94 +252,390 @@ check_status() {
 
 
 
-# 检查LED控制程序
-check_led_cli() {
-    log_message "DEBUG" "检查LED控制程序: $UGREEN_CLI"
+# 智能配置生成 - 基于HCTL顺序和LED检测
+smart_config_generation() {
+    log_message "INFO" "开始智能配置生成..."
     
-    if [[ ! -x "$UGREEN_CLI" ]]; then
-        log_message "ERROR" "LED控制程序不存在或不可执行: $UGREEN_CLI"
-        return 1
-    fi
-    log_message "DEBUG" "LED控制程序文件存在且可执行"
+    # 1. 检测可用LED
+    local detected_disk_leds=()
+    local detected_system_leds=()
     
-    # 测试LED控制程序 - 使用disk1进行测试，因为all可能不被支持
-    log_message "DEBUG" "测试LED控制程序 - 尝试disk1 -status"
-    if ! timeout 5 "$UGREEN_CLI" disk1 -status >/dev/null 2>&1; then
-        log_message "WARN" "LED控制程序测试失败，尝试使用power LED测试..."
-        # 如果disk1失败，尝试power LED
-        log_message "DEBUG" "测试LED控制程序 - 尝试power -status"
-        if ! timeout 5 "$UGREEN_CLI" power -status >/dev/null 2>&1; then
-            log_message "ERROR" "LED控制程序测试完全失败，可能设备不兼容"
-            return 1
+    log_message "INFO" "检测可用LED..."
+    
+    # 检测硬盘LED (disk1-disk15)
+    for i in {1..15}; do
+        local led_name="disk$i"
+        if timeout 3 "$UGREEN_CLI" "$led_name" -status >/dev/null 2>&1; then
+            detected_disk_leds+=("$led_name")
+            log_message "INFO" "检测到硬盘LED: $led_name"
+        else
+            # 连续3个失败就停止探测
+            local fail_count=0
+            for j in $((i+1)) $((i+2)) $((i+3)); do
+                if ! timeout 3 "$UGREEN_CLI" "disk$j" -status >/dev/null 2>&1; then
+                    ((fail_count++))
+                else
+                    break
+                fi
+            done
+            if [[ $fail_count -eq 3 ]]; then
+                log_message "INFO" "连续探测失败，停止硬盘LED探测"
+                break
+            fi
         fi
-        log_message "DEBUG" "power LED测试成功"
-    else
-        log_message "DEBUG" "disk1 LED测试成功"
+    done
+    
+    # 检测系统LED
+    if timeout 3 "$UGREEN_CLI" power -status >/dev/null 2>&1; then
+        detected_system_leds+=("power")
+        log_message "INFO" "检测到电源LED: power"
+    fi
+    if timeout 3 "$UGREEN_CLI" netdev -status >/dev/null 2>&1; then
+        detected_system_leds+=("netdev")
+        log_message "INFO" "检测到网络LED: netdev"
     fi
     
-    log_message "INFO" "LED控制程序检查通过"
+    log_message "INFO" "LED检测完成 - 硬盘LED: ${#detected_disk_leds[@]}个, 系统LED: ${#detected_system_leds[@]}个"
+    
+    # 2. 检测硬盘HCTL信息
+    log_message "INFO" "检测硬盘HCTL信息..."
+    local hctl_disks=()
+    declare -A local_disk_hctl_map=()
+    
+    # 使用lsblk获取按HCTL排序的硬盘信息
+    while IFS= read -r line; do
+        # 跳过标题行和空行
+        [[ "$line" =~ ^NAME ]] && continue
+        [[ -z "$line" ]] && continue
+        
+        # 解析硬盘信息：NAME HCTL SERIAL
+        if [[ "$line" =~ ^([a-z]+)[[:space:]]+([0-9]+:[0-9]+:[0-9]+:[0-9]+)[[:space:]]*(.*)$ ]]; then
+            local disk_name="${BASH_REMATCH[1]}"
+            local hctl_addr="${BASH_REMATCH[2]}"
+            local serial="${BASH_REMATCH[3]:-unknown}"
+            
+            local disk_device="/dev/$disk_name"
+            hctl_disks+=("$disk_device")
+            local_disk_hctl_map["$disk_device"]="$hctl_addr|$serial"
+            
+            log_message "INFO" "检测到硬盘: $disk_device (HCTL: $hctl_addr)"
+        fi
+    done < <(lsblk -S -x hctl -o name,hctl,serial 2>/dev/null)
+    
+    log_message "INFO" "HCTL检测完成 - 共检测到 ${#hctl_disks[@]} 个硬盘"
+    
+    # 3. 生成LED映射配置
+    log_message "INFO" "生成LED映射配置文件..."
+    cat > "$LED_CONFIG" << EOF
+# LED映射配置文件 - 智能生成
+# 生成时间: $(date)
+
+# LED设备地址配置
+I2C_BUS=1
+I2C_DEVICE_ADDR=0x3a
+
+EOF
+    
+    # 添加硬盘LED配置
+    if [[ ${#detected_disk_leds[@]} -gt 0 ]]; then
+        echo "# 硬盘LED映射" >> "$LED_CONFIG"
+        for i in "${!detected_disk_leds[@]}"; do
+            local led_name="${detected_disk_leds[$i]}"
+            local led_num=$((i + 1))
+            local led_id=$((i + 2))  # LED ID从2开始
+            
+            echo "DISK${led_num}_LED=$led_id" >> "$LED_CONFIG"
+            echo "$led_name=$led_id" >> "$LED_CONFIG"
+        done
+        echo "" >> "$LED_CONFIG"
+    fi
+    
+    # 添加系统LED
+    cat >> "$LED_CONFIG" << 'EOF'
+# 系统LED
+POWER_LED=0
+power=0
+NETDEV_LED=1
+netdev=1
+
+# 颜色配置
+DISK_ACTIVE_COLOR="255 255 255"
+DISK_STANDBY_COLOR="128 128 128"
+DISK_INACTIVE_COLOR="64 64 64"
+POWER_COLOR_ON="128 128 128"
+DEFAULT_BRIGHTNESS=64
+LOW_BRIGHTNESS=32
+HIGH_BRIGHTNESS=128
+EOF
+    
+    # 4. 生成HCTL映射配置
+    log_message "INFO" "生成HCTL映射配置文件..."
+    cat > "$HCTL_CONFIG" << EOF
+# HCTL硬盘映射配置文件 - 智能生成
+# 生成时间: $(date)
+
+EOF
+    
+    # 根据HCTL顺序映射到LED
+    local mapped_count=0
+    for i in "${!hctl_disks[@]}"; do
+        local disk_device="${hctl_disks[$i]}"
+        local hctl_info="${local_disk_hctl_map[$disk_device]}"
+        
+        # 检查是否有对应的LED
+        if [[ $i -lt ${#detected_disk_leds[@]} ]]; then
+            local led_name="${detected_disk_leds[$i]}"
+            
+            # 获取硬盘详细信息
+            local model=$(lsblk -dno model "$disk_device" 2>/dev/null || echo "Unknown")
+            local size=$(lsblk -dno size "$disk_device" 2>/dev/null || echo "Unknown")
+            
+            # 写入映射配置
+            echo "HCTL_MAPPING[$disk_device]=\"$hctl_info|$led_name|$model|$size\"" >> "$HCTL_CONFIG"
+            
+            # 更新全局映射
+            DISK_LED_MAP["$disk_device"]="$led_name"
+            
+            ((mapped_count++))
+            log_message "INFO" "映射: $disk_device -> $led_name (HCTL: ${hctl_info%|*})"
+        else
+            log_message "WARN" "硬盘 $disk_device 无对应LED，跳过映射"
+            echo "# $disk_device - 无对应LED" >> "$HCTL_CONFIG"
+        fi
+    done
+    
+    # 5. 生成硬盘映射配置
+    log_message "INFO" "生成硬盘映射配置文件..."
+    cat > "$DISK_CONFIG" << EOF
+# 硬盘映射配置文件 - 智能生成
+# 生成时间: $(date)
+# 格式: /dev/sdX=diskY
+
+EOF
+    
+    # 基于HCTL映射生成简化映射
+    for i in "${!hctl_disks[@]}"; do
+        local disk_device="${hctl_disks[$i]}"
+        if [[ $i -lt ${#detected_disk_leds[@]} ]]; then
+            local led_name="${detected_disk_leds[$i]}"
+            echo "$disk_device=$led_name" >> "$DISK_CONFIG"
+        fi
+    done
+    
+    # 更新全局变量
+    AVAILABLE_LEDS=("${detected_disk_leds[@]}" "${detected_system_leds[@]}")
+    actual_disk_leds=("${detected_disk_leds[@]}")
+    
+    log_message "INFO" "智能配置生成完成"
+    log_message "INFO" "可用硬盘LED: ${detected_disk_leds[*]}"
+    log_message "INFO" "检测到硬盘: ${hctl_disks[*]}"
+    log_message "INFO" "成功映射: $mapped_count 个硬盘到LED"
+    
     return 0
 }
 
-# 检测可用LED
+# 生成LED映射配置文件
+generate_led_mapping_config() {
+    log_message "INFO" "生成LED映射配置文件..."
+    
+    # 创建配置文件
+    cat > "$LED_CONFIG" << 'EOF'
+# 绿联LED映射配置文件 v3.0.0
+# 此文件由系统自动生成，记录检测到的LED映射关系
+# 生成时间: $(date)
+
+# LED设备地址配置
+I2C_BUS=1
+I2C_DEVICE_ADDR=0x3a
+
+# 检测到的LED映射
+EOF
+    
+    # 添加检测到的硬盘LED
+    local disk_led_count=0
+    for led in "${actual_disk_leds[@]}"; do
+        # 从led名称提取数字 (例如 disk1 -> 1)
+        if [[ "$led" =~ disk([0-9]+) ]]; then
+            local disk_num="${BASH_REMATCH[1]}"
+            local led_id=$((disk_num + 1))  # LED ID通常从2开始（0=power, 1=netdev）
+            echo "DISK${disk_num}_LED=$led_id" >> "$LED_CONFIG"
+            echo "$led=$led_id" >> "$LED_CONFIG"
+            ((disk_led_count++))
+        fi
+    done
+    
+    # 添加系统LED
+    cat >> "$LED_CONFIG" << 'EOF'
+
+# 系统LED
+POWER_LED=0
+power=0
+
+NETDEV_LED=1
+netdev=1
+
+# 颜色预设 (RGB值 0-255)
+COLOR_RED="255 0 0"
+COLOR_GREEN="0 255 0"  
+COLOR_BLUE="0 0 255"
+COLOR_WHITE="255 255 255"
+COLOR_YELLOW="255 255 0"
+COLOR_CYAN="0 255 255"
+COLOR_PURPLE="255 0 255"
+COLOR_ORANGE="255 165 0"
+
+# LED状态颜色配置
+DISK_ACTIVE_COLOR="255 255 255"
+DISK_STANDBY_COLOR="128 128 128"
+DISK_INACTIVE_COLOR="64 64 64"
+POWER_COLOR_ON="128 128 128"
+NETWORK_COLOR_CONNECTED="0 0 255"
+NETWORK_COLOR_DISCONNECTED="255 0 0"
+
+# 亮度设置
+DEFAULT_BRIGHTNESS=64
+LOW_BRIGHTNESS=32
+HIGH_BRIGHTNESS=128
+EOF
+    
+    log_message "INFO" "LED映射配置文件已生成: $LED_CONFIG"
+    log_message "INFO" "检测到 $disk_led_count 个硬盘LED，已添加到配置"
+    
+    return 0
+}
+
+# 动态检测可用LED - 支持任意数量的硬盘LED
 detect_available_leds() {
-    log_message "INFO" "检测可用LED..."
+    log_message "INFO" "动态检测可用LED..."
     AVAILABLE_LEDS=()
     
-    # 尝试检测所有可能的LED，添加超时保护
-    log_message "DEBUG" "检测disk LED (1-16)..."
-    for i in {1..16}; do
-        local led_name="disk$i"
-        log_message "DEBUG" "测试LED: $led_name"
-        
-        # 添加3秒超时保护，防止单个LED检测卡住
-        if timeout 3 "$UGREEN_CLI" "$led_name" -status >/dev/null 2>&1; then
-            AVAILABLE_LEDS+=("$led_name")
-            log_message "DEBUG" "检测到LED: $led_name"
+    # 检查是否需要智能配置生成
+    local need_smart_config=false
+    
+    # 检查LED映射配置
+    if [[ ! -f "$LED_CONFIG" || ! -s "$LED_CONFIG" ]]; then
+        log_message "INFO" "LED映射配置不存在或为空"
+        need_smart_config=true
+    fi
+    
+    # 检查HCTL映射配置
+    if [[ ! -f "$HCTL_CONFIG" || ! -s "$HCTL_CONFIG" ]]; then
+        log_message "INFO" "HCTL映射配置不存在或为空"
+        need_smart_config=true
+    fi
+    
+    # 如果需要，执行智能配置生成
+    if [[ "$need_smart_config" == "true" ]]; then
+        log_message "INFO" "配置文件缺失，执行智能配置生成..."
+        if smart_config_generation; then
+            log_message "INFO" "智能配置生成完成"
+            return 0
         else
-            log_message "DEBUG" "LED $led_name 不可用或超时"
+            log_message "ERROR" "智能配置生成失败"
+            return 1
         fi
-    done
+    fi
     
-    # 检测电源和网络LED
-    log_message "DEBUG" "检测系统LED (power, netdev)..."
-    for led in "power" "netdev"; do
-        log_message "DEBUG" "测试LED: $led"
+    # 从配置文件中获取实际LED映射
+    actual_disk_leds=()
+    
+    # 动态检测硬盘LED数量（不限制为4个）
+    log_message "INFO" "从配置文件检测硬盘LED..."
+    
+    if [[ -f "$CONFIG_DIR/led_mapping.conf" ]]; then
+        while IFS='=' read -r key value; do
+            # 跳过注释和空行
+            [[ "$key" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${key// }" ]] && continue
+            
+            if [[ $key =~ ^disk[0-9]+$ ]]; then
+                local led_name="$key"
+                log_message "DEBUG" "从配置检测硬盘LED: $led_name"
+                
+                # 测试LED是否可控制
+                if timeout 3 "$UGREEN_CLI" "$led_name" -status >/dev/null 2>&1; then
+                    AVAILABLE_LEDS+=("$led_name")
+                    actual_disk_leds+=("$led_name")
+                    log_message "INFO" "确认硬盘LED: $led_name"
+                else
+                    log_message "WARN" "硬盘LED $led_name 检测失败"
+                fi
+            fi
+        done < "$CONFIG_DIR/led_mapping.conf"
+    fi
+                    log_message "INFO" "确认硬盘LED: $led_name"
+                else
+                    log_message "WARN" "硬盘LED $led_name 检测失败"
+                fi
+            fi
+        done < "$CONFIG_DIR/led_mapping.conf"
+    else
+        # 如果没有配置文件，动态探测硬盘LED（最多探测到disk15）
+        log_message "INFO" "配置文件不存在，动态探测硬盘LED..."
+        for i in {1..15}; do
+            local led_name="disk$i"
+            if timeout 3 "$UGREEN_CLI" "$led_name" -status >/dev/null 2>&1; then
+                AVAILABLE_LEDS+=("$led_name")
+                actual_disk_leds+=("$led_name")
+                log_message "INFO" "探测到硬盘LED: $led_name"
+            else
+                # 连续3个失败就停止探测
+                local fail_count=0
+                for j in $((i+1)) $((i+2)) $((i+3)); do
+                    if ! timeout 3 "$UGREEN_CLI" "disk$j" -status >/dev/null 2>&1; then
+                        ((fail_count++))
+                    else
+                        break
+                    fi
+                done
+                if [[ $fail_count -eq 3 ]]; then
+                    log_message "INFO" "连续探测失败，停止硬盘LED探测"
+                    break
+                fi
+            fi
+        done
         
-        # 尝试多种方法检测LED
-        local led_detected=false
-        
-        # 方法1：status检查
-        if timeout 3 "$UGREEN_CLI" "$led" -status >/dev/null 2>&1; then
-            led_detected=true
-            log_message "DEBUG" "通过status检测到LED: $led"
-        # 方法2：尝试简单的off命令
-        elif timeout 3 "$UGREEN_CLI" "$led" -off >/dev/null 2>&1; then
-            led_detected=true
-            log_message "DEBUG" "通过off命令检测到LED: $led"
-        # 方法3：尝试颜色设置
-        elif timeout 3 "$UGREEN_CLI" "$led" -color "0 0 0" >/dev/null 2>&1; then
-            led_detected=true
-            log_message "DEBUG" "通过color命令检测到LED: $led"
+        # 动态探测完成后，生成配置文件
+        if [[ ${#actual_disk_leds[@]} -gt 0 ]]; then
+            log_message "INFO" "动态探测完成，生成LED映射配置文件..."
+            generate_led_mapping_config
         fi
-        
-        if [[ "$led_detected" == "true" ]]; then
-            AVAILABLE_LEDS+=("$led")
-            log_message "INFO" "成功检测到系统LED: $led"
-        else
-            log_message "WARN" "系统LED $led 检测失败，但将保留在功能中"
-            # 即使检测失败，也加入列表，因为某些设备可能在检测时有问题但实际可控制
-            AVAILABLE_LEDS+=("$led")
-        fi
-    done
+    fi
     
-    log_message "INFO" "检测到 ${#AVAILABLE_LEDS[@]} 个LED: ${AVAILABLE_LEDS[*]}"
+    # 检测电源LED
+    log_message "INFO" "检测电源LED..."
+    if timeout 3 "$UGREEN_CLI" power -status >/dev/null 2>&1; then
+        AVAILABLE_LEDS+=("power")
+        log_message "INFO" "检测到电源LED: power"
+    else
+        log_message "WARN" "电源LED检测失败，但保留功能"
+        AVAILABLE_LEDS+=("power")  # 即使检测失败也保留
+    fi
     
-    # 确保至少检测到一些LED，否则可能有问题
+    # 检测网络LED
+    log_message "INFO" "检测网络LED..."
+    if timeout 3 "$UGREEN_CLI" netdev -status >/dev/null 2>&1; then
+        AVAILABLE_LEDS+=("netdev")
+        log_message "INFO" "检测到网络LED: netdev"
+    else
+        log_message "WARN" "网络LED检测失败，但保留功能"
+        AVAILABLE_LEDS+=("netdev")  # 即使检测失败也保留
+    fi
+    
+    log_message "INFO" "LED检测完成，共 ${#AVAILABLE_LEDS[@]} 个LED: ${AVAILABLE_LEDS[*]}"
+    log_message "INFO" "硬盘LED: ${actual_disk_leds[*]}"
+    
+    # 动态LED数量，不强制检查固定数量
     if [[ ${#AVAILABLE_LEDS[@]} -eq 0 ]]; then
-        log_message "WARN" "未检测到任何可用LED，可能存在问题"
+        log_message "ERROR" "未检测到任何可用LED"
         return 1
     fi
+    
+    # 保存LED配置到缓存文件
+    local led_cache="$CONFIG_DIR/detected_leds.conf"
+    echo "# 检测到的LED列表 - $(date)" > "$led_cache"
+    echo "DETECTED_LEDS=(${AVAILABLE_LEDS[*]})" >> "$led_cache"
+    echo "DISK_LEDS=(${actual_disk_leds[*]})" >> "$led_cache"
     
     return 0
 }
@@ -338,13 +671,10 @@ check_network_status() {
     fi
 }
 
-# 更新网络LED状态
+# 更新网络LED状态 - 使用覆盖方式
 update_network_led() {
     local network_status
     network_status=$(check_network_status)
-    local status_result=$?
-    
-    log_message "DEBUG" "网络状态检测结果: $network_status"
     
     # 根据网络状态设置LED颜色和亮度
     local color brightness
@@ -352,70 +682,42 @@ update_network_led() {
         "connected")
             color="0 0 255"      # 蓝色
             brightness="64"
-            log_message "DEBUG" "网络状态: 已连接 -> 蓝色LED"
             ;;
         "no_internet")
             color="255 165 0"    # 橙色
             brightness="64"
-            log_message "WARN" "网络状态: 无法访问外网 -> 橙色LED"
             ;;
         "disconnected")
             color="255 0 0"      # 红色
             brightness="64"
-            log_message "WARN" "网络状态: 断开连接 -> 红色LED"
             ;;
         *)
             color="off"
             brightness="0"
-            log_message "ERROR" "网络状态: 未知 -> 关闭LED"
             ;;
     esac
     
-    # 尝试使用set_led_status（检查可用性）
-    if [[ " ${AVAILABLE_LEDS[*]} " =~ " netdev " ]]; then
-        if set_led_status "netdev" "$color" "$brightness"; then
-            return 0
-        fi
-    fi
-    
-    # 如果上面失败，直接尝试控制LED（绕过可用性检查）
-    log_message "DEBUG" "直接控制网络LED（绕过可用性检查）"
-    if [[ "$color" == "off" ]]; then
-        if timeout 5 "$UGREEN_CLI" netdev -off >/dev/null 2>&1; then
-            log_message "DEBUG" "直接关闭网络LED成功"
-            return 0
-        fi
-    else
-        if timeout 5 "$UGREEN_CLI" netdev -color $color -brightness "$brightness" -on >/dev/null 2>&1; then
-            log_message "DEBUG" "直接控制网络LED成功: $color (亮度: $brightness)"
-            return 0
-        fi
-    fi
-    
-    log_message "WARN" "网络LED控制失败"
-    return 1
-}
-
-# 更新电源LED状态
-update_power_led() {
-    # 电源LED保持淡白色常亮表示系统运行正常
-    log_message "DEBUG" "更新电源LED状态 -> 淡白色常亮"
-    
-    # 尝试使用set_led_status（检查可用性）
-    if [[ " ${AVAILABLE_LEDS[*]} " =~ " power " ]]; then
-        if set_led_status "power" "128 128 128" "64"; then
-            return 0
-        fi
-    fi
-    
-    # 如果上面失败，直接尝试控制LED（绕过可用性检查）
-    log_message "DEBUG" "直接控制电源LED（绕过可用性检查）"
-    if timeout 5 "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on >/dev/null 2>&1; then
-        log_message "DEBUG" "直接控制电源LED成功"
+    # 直接设置LED状态
+    if set_led_status "netdev" "$color" "$brightness"; then
         return 0
     else
-        log_message "WARN" "电源LED控制失败"
-        return 1
+        # 如果失败，尝试直接控制
+        if [[ "$color" == "off" ]]; then
+            timeout 5 "$UGREEN_CLI" netdev -off >/dev/null 2>&1
+        else
+            timeout 5 "$UGREEN_CLI" netdev -color $color -brightness "$brightness" -on >/dev/null 2>&1
+        fi
+    fi
+}
+
+# 更新电源LED状态 - 使用覆盖方式
+update_power_led() {
+    # 电源LED保持淡白色常亮表示系统运行正常
+    if set_led_status "power" "$POWER_COLOR_ON" "64"; then
+        return 0
+    else
+        # 如果失败，直接控制
+        timeout 5 "$UGREEN_CLI" power -color "$POWER_COLOR_ON" -brightness 64 -on >/dev/null 2>&1
     fi
 }
 
@@ -593,159 +895,192 @@ get_available_disks() {
     log_message "DEBUG" "可用硬盘: ${AVAILABLE_DISKS[*]}"
 }
 
-# 设置LED状态
+# 设置LED状态 - 使用覆盖方式而不是关闭再打开
 set_led_status() {
     local led="$1"
     local color="$2"
     local brightness="${3:-$DEFAULT_BRIGHTNESS}"
     
-    # 检查LED是否在可用列表中
-    if [[ ! " ${AVAILABLE_LEDS[*]} " =~ " $led " ]]; then
-        log_message "DEBUG" "LED $led 不在可用列表中"
-        return 1
+    # 检查缓存，避免重复设置相同状态
+    local cache_key="$led"
+    local new_status="$color|$brightness"
+    local cached_status="${LED_STATUS_CACHE[$cache_key]:-}"
+    
+    if [[ "$new_status" == "$cached_status" ]]; then
+        log_message "DEBUG" "LED $led 状态未变化，跳过更新"
+        return 0
     fi
     
-    # 构建控制命令
+    # 直接设置LED状态，使用覆盖方式
     if [[ "$color" == "off" || "$color" == "0 0 0" ]]; then
-        if "$UGREEN_CLI" "$led" -off >/dev/null 2>&1; then
-            LED_STATUS_CACHE["$led"]="off"
+        if timeout 5 "$UGREEN_CLI" "$led" -off >/dev/null 2>&1; then
+            LED_STATUS_CACHE["$cache_key"]="off"
             log_message "DEBUG" "LED $led 已关闭"
+            return 0
         else
             log_message "WARN" "关闭LED $led 失败"
             return 1
         fi
     else
-        if "$UGREEN_CLI" "$led" -color $color -brightness "$brightness" -on >/dev/null 2>&1; then
-            LED_STATUS_CACHE["$led"]="$color|$brightness"
-            log_message "DEBUG" "LED $led 设置为 $color (亮度: $brightness)"
+        # 直接设置颜色和亮度，覆盖当前状态
+        if timeout 5 "$UGREEN_CLI" "$led" -color $color -brightness "$brightness" -on >/dev/null 2>&1; then
+            LED_STATUS_CACHE["$cache_key"]="$new_status"
+            log_message "DEBUG" "LED $led 已更新: $color (亮度: $brightness)"
+            return 0
         else
             log_message "WARN" "设置LED $led 失败"
             return 1
         fi
     fi
-    
-    return 0
 }
 
-# 更新硬盘LED状态 (基于HCTL配置)
+# 更新硬盘LED状态 - 优先使用hdparm，失败时才重新映射
 update_disk_leds() {
     local updated_count=0
     local need_remap=false
+    local failed_disks=()
     
-    log_message "DEBUG" "开始更新硬盘LED状态，当前映射数量: ${#DISK_LED_MAP[@]}"
+    log_message "DEBUG" "开始更新硬盘LED状态，映射数量: ${#DISK_LED_MAP[@]}"
     
-    # 如果没有HCTL映射配置，立即生成
+    # 如果没有HCTL映射配置，生成一次
     if [[ ${#DISK_LED_MAP[@]} -eq 0 ]]; then
-        log_message "INFO" "没有HCTL映射配置，立即生成..."
-        refresh_hctl_mapping
-        return
+        log_message "INFO" "首次运行，加载HCTL映射..."
+        if ! load_hctl_mapping; then
+            log_message "INFO" "HCTL映射不存在，生成新映射..."
+            if ! refresh_hctl_mapping; then
+                log_message "ERROR" "生成HCTL映射失败"
+                return 1
+            fi
+        fi
     fi
     
-    # 收集当前应该使用的LED列表
-    local used_leds=()
-    
-    # 遍历所有HCTL配置中的硬盘
-    for disk in "${!DISK_LED_MAP[@]}"; do
-        local led="${DISK_LED_MAP[$disk]:-}"
+    # 主要逻辑：遍历所有已映射的硬盘，使用hdparm检测状态
+    for disk_device in "${!DISK_LED_MAP[@]}"; do
+        local led_name="${DISK_LED_MAP[$disk_device]}"
         
-        # 跳过无效的LED映射
-        if [[ -z "$led" || "$led" == "none" ]]; then
-            log_message "DEBUG" "硬盘 $disk 无LED映射，跳过"
+        # 跳过无效映射
+        if [[ -z "$led_name" || "$led_name" == "none" ]]; then
             continue
         fi
         
-        # 关键步骤：尝试获取HCTL配置中硬盘的当前状态
+        log_message "DEBUG" "检测硬盘: $disk_device -> $led_name"
+        
+        # 关键：优先使用hdparm获取硬盘状态
         local disk_status
-        disk_status=$(get_disk_status "$disk")
-        local status_result=$?
+        local hdparm_success=false
         
-        log_message "DEBUG" "HCTL配置硬盘 $disk -> LED $led: status=$disk_status, result=$status_result"
-        
-        # 如果无法获取硬盘状态，说明硬盘位置变化或被拔出
-        if [[ $status_result -ne 0 ]]; then
-            case "$disk_status" in
-                "not_found"|"error")
-                    log_message "WARN" "HCTL配置中的硬盘 $disk 无法访问 (状态: $disk_status)"
-                    log_message "INFO" "硬盘位置可能变化或已拔出，关闭LED $led"
-                    
-                    # 立即关闭对应LED
-                    set_led_status "$led" "off"
-                    
-                    # 标记需要重新生成HCTL配置
-                    need_remap=true
-                    ;;
-            esac
-            continue
-        fi
-        
-        # 记录这个LED正在使用
-        used_leds+=("$led")
-        
-        # 能获取到硬盘状态，检查是否需要更新LED
-        local cached_status="${DISK_STATUS_CACHE[$disk]:-}"
-        if [[ "$disk_status" == "$cached_status" ]]; then
-            log_message "DEBUG" "硬盘 $disk 状态无变化: $disk_status"
-            continue
-        fi
-        
-        # 更新状态缓存
-        DISK_STATUS_CACHE["$disk"]="$disk_status"
-        
-        # 根据硬盘状态更新LED（只更新LED，不改变配置）
-        case "$disk_status" in
-            "active")
-                log_message "INFO" "硬盘 $disk 活动状态 -> LED $led 白色高亮"
-                set_led_status "$led" "$DISK_COLOR_ACTIVE" "$HIGH_BRIGHTNESS"
-                ((updated_count++))
-                ;;
-            "standby")
-                log_message "INFO" "硬盘 $disk 休眠状态 -> LED $led 淡白色"
-                set_led_status "$led" "$DISK_COLOR_STANDBY" "$LOW_BRIGHTNESS"
-                ((updated_count++))
-                ;;
-            "unknown")
-                log_message "WARN" "硬盘 $disk 状态未知 -> LED $led 关闭"
-                set_led_status "$led" "off"
-                ((updated_count++))
-                ;;
-            *)
-                log_message "WARN" "硬盘 $disk 未知状态: $disk_status"
-                ;;
-        esac
-    done
-    
-    # 关闭未使用的硬盘LED
-    for led in "${AVAILABLE_LEDS[@]}"; do
-        # 只处理硬盘LED
-        if [[ "$led" =~ ^disk[0-9]+$ ]]; then
-            local led_in_use=false
-            for used_led in "${used_leds[@]}"; do
-                if [[ "$led" == "$used_led" ]]; then
-                    led_in_use=true
-                    break
-                fi
-            done
+        # 尝试hdparm检测（5秒超时）
+        local hdparm_output
+        if hdparm_output=$(timeout 5 hdparm -C "$disk_device" 2>&1); then
+            if echo "$hdparm_output" | grep -q "active/idle"; then
+                disk_status="active"
+                hdparm_success=true
+            elif echo "$hdparm_output" | grep -q "standby"; then
+                disk_status="standby" 
+                hdparm_success=true
+            elif echo "$hdparm_output" | grep -q "sleeping"; then
+                disk_status="standby"
+                hdparm_success=true
+            else
+                log_message "DEBUG" "hdparm返回未知状态: $hdparm_output"
+                disk_status="unknown"
+                hdparm_success=true
+            fi
+        else
+            # hdparm失败 - 可能是硬盘被拔出、I/O错误或设备变化
+            local exit_code=$?
+            log_message "WARN" "hdparm检测 $disk_device 失败 (退出码: $exit_code)"
+            log_message "DEBUG" "hdparm错误输出: $hdparm_output"
             
-            # 如果这个LED没有被使用，关闭它
-            if [[ "$led_in_use" == "false" ]]; then
-                local current_status="${LED_STATUS_CACHE[$led]:-}"
-                if [[ "$current_status" != "off" ]]; then
-                    log_message "INFO" "关闭未使用的硬盘LED: $led"
-                    set_led_status "$led" "off"
-                    ((updated_count++))
-                fi
+            # 检查具体失败原因
+            if [[ "$hdparm_output" =~ "No such file or directory" ]]; then
+                log_message "WARN" "硬盘设备 $disk_device 不存在，可能已被拔出"
+            elif [[ "$hdparm_output" =~ "Input/output error" || $exit_code -eq 124 ]]; then
+                log_message "WARN" "硬盘 $disk_device I/O错误或超时，可能硬盘故障或被拔出"
+            fi
+            
+            # 标记需要重新映射
+            failed_disks+=("$disk_device")
+            need_remap=true
+            hdparm_success=false
+            
+            # 关闭对应LED
+            set_led_status "$led_name" "off"
+            continue
+        fi
+        
+        # hdparm成功 - 检查状态是否有变化
+        if [[ "$hdparm_success" == true ]]; then
+            local cached_status="${DISK_STATUS_CACHE[$disk_device]:-}"
+            
+            # 只有状态变化时才更新LED（避免无效更新）
+            if [[ "$disk_status" != "$cached_status" ]]; then
+                log_message "DEBUG" "硬盘 $disk_device 状态变化: $cached_status -> $disk_status"
+                
+                # 更新状态缓存
+                DISK_STATUS_CACHE["$disk_device"]="$disk_status"
+                
+                # 根据硬盘状态设置LED
+                case "$disk_status" in
+                    "active")
+                        set_led_status "$led_name" "$DISK_ACTIVE_COLOR" "$DEFAULT_BRIGHTNESS"
+                        log_message "DEBUG" "硬盘 $disk_device 活跃，LED $led_name 设为白色"
+                        ;;
+                    "standby")
+                        set_led_status "$led_name" "$DISK_STANDBY_COLOR" "$LOW_BRIGHTNESS"
+                        log_message "DEBUG" "硬盘 $disk_device 休眠，LED $led_name 设为暗灰色"
+                        ;;
+                    "unknown")
+                        set_led_status "$led_name" "$DISK_INACTIVE_COLOR" "$LOW_BRIGHTNESS"
+                        log_message "DEBUG" "硬盘 $disk_device 状态未知，LED $led_name 设为深灰色"
+                        ;;
+                esac
+                
+                ((updated_count++))
+            else
+                log_message "DEBUG" "硬盘 $disk_device 状态无变化: $disk_status"
             fi
         fi
     done
     
-    # 如果检测到硬盘位置变化，重新生成HCTL配置
-    if [[ "$need_remap" == "true" ]]; then
-        log_message "INFO" "检测到硬盘位置变化，重新生成HCTL配置..."
-        refresh_hctl_mapping
-        return
+    # 关闭未映射的硬盘LED
+    for led in "${actual_disk_leds[@]}"; do
+        local led_mapped=false
+        for disk in "${!DISK_LED_MAP[@]}"; do
+            if [[ "${DISK_LED_MAP[$disk]}" == "$led" ]]; then
+                led_mapped=true
+                break
+            fi
+        done
+        
+        if [[ "$led_mapped" == false ]]; then
+            set_led_status "$led" "off"
+            log_message "DEBUG" "关闭未映射的LED: $led"
+        fi
+    done
+    
+    # 重要：只有在hdparm失败时才重新生成映射
+    if [[ "$need_remap" == true && ${#failed_disks[@]} -gt 0 ]]; then
+        log_message "INFO" "检测到 ${#failed_disks[@]} 个硬盘hdparm失败，重新生成HCTL映射..."
+        log_message "INFO" "失败的硬盘: ${failed_disks[*]}"
+        
+        # 重新生成映射配置
+        if refresh_hctl_mapping; then
+            log_message "INFO" "HCTL映射重新生成成功"
+            # 重新加载映射
+            load_hctl_mapping
+        else
+            log_message "ERROR" "HCTL映射重新生成失败"
+        fi
     fi
     
-    log_message "DEBUG" "LED状态更新完成，更新了 $updated_count 个LED"
+    if [[ $updated_count -gt 0 ]]; then
+        log_message "INFO" "硬盘LED更新完成，更新了 $updated_count 个LED"
+    else
+        log_message "DEBUG" "硬盘LED状态无变化，跳过更新"
+    fi
+    
+    return 0
 }
 
 # 信号处理函数
@@ -770,64 +1105,35 @@ handle_signal() {
     exit 0
 }
 
-# 主循环 - 严格按照HCTL配置进行监控
+# 主循环 - 30秒检测一次，简化日志
 main_loop() {
     log_message "INFO" "主监控循环启动，检查间隔: ${CHECK_INTERVAL}秒"
-    log_message "INFO" "当前HCTL配置：${#DISK_LED_MAP[@]} 个硬盘映射"
     
-    # 记录开始时间用于定期重映射和系统LED更新
-    local last_hctl_refresh=$(date +%s)
-    local last_system_led_update=0    # 立即更新系统LED
-    local hctl_refresh_interval=3600  # 1小时定期刷新HCTL
-    local system_led_interval=10      # 10秒更新一次系统LED (更快响应)
+    local last_system_led_update=0
+    local system_led_interval=60  # 系统LED每分钟更新一次
+    local last_status_log=0
+    local status_log_interval=300  # 每5分钟记录一次状态
     
     while [[ "$DAEMON_RUNNING" == "true" ]]; do
         local current_time=$(date +%s)
         
-        log_message "DEBUG" "循环迭代开始，时间: $(date)"
+        # 主要任务：基于hdparm状态更新硬盘LED
+        update_disk_leds
         
-        # 核心步骤：严格基于当前HCTL配置更新硬盘LED状态
-        # 只检查配置中的硬盘，不扫描新硬盘
-        if ! update_disk_leds; then
-            log_message "WARN" "硬盘LED更新失败，继续运行"
-        fi
-        
-        # 定期更新系统LED状态（电源和网络）
+        # 定期更新系统LED（降低频率）
         if [[ $((current_time - last_system_led_update)) -gt $system_led_interval ]]; then
-            log_message "INFO" "定期更新系统LED状态..."
-            
-            # 显示当前可用LED列表用于调试
-            log_message "DEBUG" "当前可用LED列表: ${AVAILABLE_LEDS[*]}"
-            
-            if ! update_power_led; then
-                log_message "WARN" "电源LED更新失败，尝试强制控制"
-                timeout 5 "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on >/dev/null 2>&1
-            else
-                log_message "DEBUG" "电源LED更新成功"
-            fi
-            
-            if ! update_network_led; then
-                log_message "WARN" "网络LED更新失败，尝试强制控制"
-                timeout 5 "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on >/dev/null 2>&1
-            else
-                log_message "DEBUG" "网络LED更新成功"
-            fi
-            
+            update_power_led
+            update_network_led
             last_system_led_update=$current_time
         fi
         
-        # 定期刷新HCTL配置（处理硬盘热插拔情况）
-        if [[ $((current_time - last_hctl_refresh)) -gt $hctl_refresh_interval ]]; then
-            log_message "INFO" "定期HCTL配置刷新时间到达，重新生成配置..."
-            if refresh_hctl_mapping; then
-                log_message "INFO" "定期HCTL配置刷新成功，当前映射数量: ${#DISK_LED_MAP[@]}"
-                last_hctl_refresh=$current_time
-            else
-                log_message "WARN" "定期HCTL配置刷新失败，将在下次继续尝试"
-            fi
+        # 定期记录状态日志（减少日志量）
+        if [[ $((current_time - last_status_log)) -gt $status_log_interval ]]; then
+            log_message "INFO" "状态监控正常 - 硬盘映射: ${#DISK_LED_MAP[@]}个, LED总数: ${#AVAILABLE_LEDS[@]}个"
+            last_status_log=$current_time
         fi
         
-        # 等待下次检查
+        # 30秒等待
         sleep "$CHECK_INTERVAL"
     done
     
@@ -882,123 +1188,51 @@ start_daemon() {
     _start_daemon_direct
 }
 
-# 直接启动守护进程（不fork）
+# 直接启动守护进程（不fork）- 简化版本
 _start_daemon_direct() {
-    # 强制启用调试模式用于问题排查
-    DEBUG_MODE=true
-    
-    log_message "INFO" "=== _start_daemon_direct 函数开始执行 ==="
+    log_message "INFO" "LLLED后台服务启动中..."
     
     # 写入PID文件
     echo $$ > "$PID_FILE"
-    log_message "INFO" "已写入PID文件: $PID_FILE, PID: $$"
     
     # 设置信号处理
     trap 'handle_signal TERM' TERM
     trap 'handle_signal INT' INT
     trap 'handle_signal QUIT' QUIT
-    log_message "INFO" "已设置信号处理"
     
-    # 基础环境检查
-    log_message "INFO" "开始基础环境检查..."
+    # 基础检查
     check_root
-    log_message "INFO" "root权限检查通过"
-    
     load_configs
-    log_message "INFO" "配置文件加载完成"
     
-    log_message "INFO" "开始LED控制程序检查..."
     if ! check_led_cli; then
-        log_message "ERROR" "LED控制程序检查失败，服务无法启动"
+        log_message "ERROR" "LED控制程序检查失败"
         exit 1
     fi
-    log_message "INFO" "LED控制程序检查通过"
     
-    log_message "INFO" "开始检测可用LED..."
+    # 检测LED并保存配置
     if ! detect_available_leds; then
         log_message "ERROR" "LED检测失败"
         exit 1
     fi
-    log_message "INFO" "LED检测完成，发现 ${#AVAILABLE_LEDS[@]} 个LED"
     
-    # 启动时清理所有硬盘LED状态，确保干净的初始状态
-    log_message "INFO" "【初始化】清理所有硬盘LED状态"
-    for led in "${AVAILABLE_LEDS[@]}"; do
-        if [[ "$led" =~ ^disk[0-9]+$ ]]; then
-            set_led_status "$led" "off"
-            log_message "DEBUG" "已关闭硬盘LED: $led"
-        fi
-    done
+    # 初始化系统LED
+    update_power_led
+    update_network_led
     
-    # 初始化系统LED状态
-    log_message "INFO" "【初始化】设置系统LED初始状态"
-    
-    # 强制立即更新系统LED，不依赖于检测结果
-    if [[ " ${AVAILABLE_LEDS[*]} " =~ " power " ]]; then
-        log_message "INFO" "初始化电源LED..."
-        if ! update_power_led; then
-            log_message "WARN" "电源LED初始化失败"
-            # 尝试直接设置
-            timeout 5 "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on >/dev/null 2>&1
-        fi
-    else
-        log_message "WARN" "power LED未在可用列表中，尝试直接初始化"
-        timeout 5 "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on >/dev/null 2>&1
-    fi
-    
-    if [[ " ${AVAILABLE_LEDS[*]} " =~ " netdev " ]]; then
-        log_message "INFO" "初始化网络LED..."
-        if ! update_network_led; then
-            log_message "WARN" "网络LED初始化失败"
-            # 尝试直接设置为蓝色（假设网络正常）
-            timeout 5 "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on >/dev/null 2>&1
-        fi
-    else
-        log_message "WARN" "netdev LED未在可用列表中，尝试直接初始化"
-        timeout 5 "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on >/dev/null 2>&1
-    fi
-    
-    # ===== 三步初始化流程 =====
-    
-    # 第一步：生成HCTL配置建立硬盘-LED映射关系
-    log_message "INFO" "【第一步】生成HCTL配置建立硬盘-LED映射关系"
-    if ! refresh_hctl_mapping; then
-        log_message "WARN" "HCTL映射生成失败，继续运行仅监控系统LED"
-        # 即使HCTL映射失败，也继续运行守护进程，至少可以监控系统LED
-    fi
-    
-    # 验证第一步结果
+    # 生成HCTL映射（如果需要）
     if [[ ${#DISK_LED_MAP[@]} -eq 0 ]]; then
-        log_message "WARN" "警告：没有检测到任何硬盘映射，服务将持续监控"
-    else
-        log_message "INFO" "第一步完成，已建立 ${#DISK_LED_MAP[@]} 个硬盘-LED映射："
-        for disk in "${!DISK_LED_MAP[@]}"; do
-            local led="${DISK_LED_MAP[$disk]}"
-            local hctl_info="${DISK_HCTL_MAP[$disk]}"
-            log_message "INFO" "  $disk -> LED $led (HCTL: ${hctl_info%%|*})"
-        done
+        log_message "INFO" "生成HCTL映射配置..."
+        refresh_hctl_mapping
     fi
     
-    # 第二步：根据HCTL配置设置硬盘LED初始状态
-    log_message "INFO" "【第二步】根据HCTL配置设置硬盘LED初始状态"
-    update_disk_leds
-    log_message "INFO" "第二步完成，硬盘LED初始状态设置完毕"
-    
-    # 第三步：开始持续监控循环
-    log_message "INFO" "【第三步】开始基于HCTL配置的持续监控循环"
-    log_message "INFO" "守护进程初始化完成，进入主循环监控模式"
-    log_message "INFO" "当前环境状态:"
-    log_message "INFO" "  - DAEMON_RUNNING: $DAEMON_RUNNING"
-    log_message "INFO" "  - CHECK_INTERVAL: $CHECK_INTERVAL"
-    log_message "INFO" "  - 硬盘映射数量: ${#DISK_LED_MAP[@]}"
-    log_message "INFO" "  - 可用LED数量: ${#AVAILABLE_LEDS[@]}"
+    log_message "INFO" "守护进程初始化完成，进入监控循环"
     
     # 启动主循环
     main_loop
     
-    # 如果主循环意外退出，记录日志
-    log_message "WARN" "主循环意外退出！"
-    log_message "INFO" "DAEMON_RUNNING状态: $DAEMON_RUNNING"
+    # 清理
+    rm -f "$PID_FILE"
+    log_message "INFO" "守护进程结束"
 }
 
 # 服务状态检查
@@ -1062,17 +1296,18 @@ restart_daemon() {
 # 显示帮助信息
 show_help() {
     echo "LLLED后台监控服务 v$LLLED_VERSION"
-    echo "用法: $0 {start|stop|restart|status|help}"
+    echo "用法: $0 {start|stop|restart|status|clear-logs|help}"
     echo
     echo "命令说明:"
-    echo "  start   - 启动后台服务"
-    echo "  stop    - 停止后台服务"
-    echo "  restart - 重启后台服务"
-    echo "  status  - 查看服务状态"
-    echo "  help    - 显示帮助信息"
+    echo "  start      - 启动后台服务"
+    echo "  stop       - 停止后台服务"
+    echo "  restart    - 重启后台服务"
+    echo "  status     - 查看服务状态"
+    echo "  clear-logs - 清除日志文件"
+    echo "  help       - 显示帮助信息"
     echo
     echo "日志文件: $LOG_FILE"
-    echo "配置文件: $LED_CONFIG"
+    echo "配置目录: $CONFIG_DIR"
 }
 
 # 主程序入口
@@ -1091,6 +1326,9 @@ case "${1:-start}" in
         ;;
     status)
         check_status
+        ;;
+    clear-logs)
+        clear_logs
         ;;
     help|--help|-h)
         show_help

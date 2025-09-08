@@ -326,18 +326,187 @@ EOF
     log_install "SUCCESS: 简化版LLLED命令创建成功"
 fi
 
-# 初始化HCTL映射
-log_install "初始化HCTL硬盘映射..."
-if [[ -x "scripts/smart_disk_activity_hctl.sh" ]]; then
-    log_install "执行初始HCTL检测..."
-    if "scripts/smart_disk_activity_hctl.sh" --update-mapping --save-config; then
-        log_install "SUCCESS: HCTL映射初始化成功"
-    else
-        log_install "WARNING: HCTL映射初始化失败，将在首次运行时重试"
+# 智能配置生成 - 基于HCTL和LED检测
+log_install "开始智能配置生成..."
+
+# 1. 先检测可用LED
+log_install "检测可用LED..."
+if [[ -x "ugreen_leds_cli" ]]; then
+    # 获取LED状态
+    led_status=$("./ugreen_leds_cli" all -status 2>/dev/null || echo "")
+    
+    # 解析可用的硬盘LED
+    available_disk_leds=()
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^(disk[0-9]+):[[:space:]]*status ]]; then
+            led_name="${BASH_REMATCH[1]}"
+            available_disk_leds+=("$led_name")
+            log_install "检测到硬盘LED: $led_name"
+        fi
+    done <<< "$led_status"
+    
+    # 检测系统LED
+    system_leds=()
+    if echo "$led_status" | grep -q "^power:"; then
+        system_leds+=("power")
+        log_install "检测到电源LED: power"
     fi
+    if echo "$led_status" | grep -q "^netdev:"; then
+        system_leds+=("netdev")
+        log_install "检测到网络LED: netdev"
+    fi
+    
+    log_install "LED检测完成 - 硬盘LED: ${#available_disk_leds[@]}个, 系统LED: ${#system_leds[@]}个"
 else
-    log_install "WARNING: HCTL脚本不存在，跳过初始化"
+    log_install "WARNING: LED控制程序不可执行，使用默认配置"
+    available_disk_leds=("disk1" "disk2" "disk3" "disk4")
+    system_leds=("power" "netdev")
 fi
+
+# 2. 检测硬盘HCTL信息
+log_install "检测硬盘HCTL信息..."
+declare -a hctl_disks=()
+declare -A disk_hctl_map=()
+
+# 使用lsblk获取按HCTL排序的硬盘信息
+while IFS= read -r line; do
+    # 跳过标题行
+    [[ "$line" =~ ^NAME ]] && continue
+    [[ -z "$line" ]] && continue
+    
+    # 解析硬盘信息：NAME HCTL SERIAL
+    if [[ "$line" =~ ^([a-z]+)[[:space:]]+([0-9]+:[0-9]+:[0-9]+:[0-9]+)[[:space:]]*(.*)$ ]]; then
+        disk_name="${BASH_REMATCH[1]}"
+        hctl_addr="${BASH_REMATCH[2]}"
+        serial="${BASH_REMATCH[3]:-unknown}"
+        
+        disk_device="/dev/$disk_name"
+        hctl_disks+=("$disk_device")
+        disk_hctl_map["$disk_device"]="$hctl_addr|$serial"
+        
+        log_install "检测到硬盘: $disk_device (HCTL: $hctl_addr, Serial: $serial)"
+    fi
+done < <(lsblk -S -x hctl -o name,hctl,serial 2>/dev/null)
+
+log_install "HCTL检测完成 - 共检测到 ${#hctl_disks[@]} 个硬盘"
+
+# 3. 生成LED映射配置
+log_install "生成LED映射配置..."
+cat > "config/led_mapping.conf" << 'EOF'
+# LED映射配置文件 - 自动生成
+# 生成时间: $(date)
+
+# LED设备地址配置
+I2C_BUS=1
+I2C_DEVICE_ADDR=0x3a
+
+EOF
+
+# 添加检测到的硬盘LED配置
+if [[ ${#available_disk_leds[@]} -gt 0 ]]; then
+    echo "# 硬盘LED映射" >> "config/led_mapping.conf"
+    for i in "${!available_disk_leds[@]}"; do
+        led_name="${available_disk_leds[$i]}"
+        led_num=$((i + 1))
+        led_id=$((i + 2))  # LED ID从2开始（0=power, 1=netdev）
+        
+        echo "DISK${led_num}_LED=$led_id" >> "config/led_mapping.conf"
+        echo "$led_name=$led_id" >> "config/led_mapping.conf"
+    done
+    echo "" >> "config/led_mapping.conf"
+fi
+
+# 添加系统LED配置
+cat >> "config/led_mapping.conf" << 'EOF'
+# 系统LED
+POWER_LED=0
+power=0
+NETDEV_LED=1
+netdev=1
+
+# 颜色配置
+DISK_ACTIVE_COLOR="255 255 255"
+DISK_STANDBY_COLOR="128 128 128"
+DISK_INACTIVE_COLOR="64 64 64"
+POWER_COLOR_ON="128 128 128"
+
+# 亮度设置
+DEFAULT_BRIGHTNESS=64
+LOW_BRIGHTNESS=32
+HIGH_BRIGHTNESS=128
+EOF
+
+log_install "SUCCESS: LED映射配置生成完成"
+
+# 4. 建立智能硬盘-LED映射
+log_install "建立硬盘-LED映射关系..."
+cat > "config/hctl_mapping.conf" << 'EOF'
+# HCTL硬盘映射配置文件 - 自动生成
+# 生成时间: $(date)
+# 此文件记录硬盘HCTL信息与LED位置的映射关系
+
+# 配置格式:
+# HCTL_MAPPING[设备路径]="HCTL地址|LED位置|序列号|型号|容量"
+
+EOF
+
+# 根据HCTL顺序映射到LED
+mapped_count=0
+for i in "${!hctl_disks[@]}"; do
+    disk_device="${hctl_disks[$i]}"
+    hctl_info="${disk_hctl_map[$disk_device]}"
+    
+    # 检查是否有对应的LED
+    if [[ $i -lt ${#available_disk_leds[@]} ]]; then
+        led_name="${available_disk_leds[$i]}"
+        
+        # 获取硬盘详细信息
+        model=$(lsblk -dno model "$disk_device" 2>/dev/null || echo "Unknown")
+        size=$(lsblk -dno size "$disk_device" 2>/dev/null || echo "Unknown")
+        
+        # 写入映射配置
+        echo "HCTL_MAPPING[$disk_device]=\"$hctl_info|$led_name|$model|$size\"" >> "config/hctl_mapping.conf"
+        
+        ((mapped_count++))
+        log_install "映射: $disk_device -> $led_name (HCTL: ${hctl_info%|*})"
+    else
+        log_install "WARNING: 硬盘 $disk_device 无对应LED，跳过映射"
+        echo "# $disk_device - 无对应LED" >> "config/hctl_mapping.conf"
+    fi
+done
+
+log_install "SUCCESS: HCTL映射生成完成，映射了 $mapped_count 个硬盘"
+
+# 5. 生成简化的硬盘映射配置
+log_install "生成硬盘映射配置..."
+cat > "config/disk_mapping.conf" << 'EOF'
+# 硬盘映射配置文件 - 自动生成
+# 生成时间: $(date)
+# 格式: /dev/sdX=diskY
+
+EOF
+
+# 基于HCTL映射生成简化映射
+for i in "${!hctl_disks[@]}"; do
+    disk_device="${hctl_disks[$i]}"
+    if [[ $i -lt ${#available_disk_leds[@]} ]]; then
+        led_name="${available_disk_leds[$i]}"
+        echo "$disk_device=$led_name" >> "config/disk_mapping.conf"
+    fi
+done
+
+log_install "SUCCESS: 硬盘映射配置生成完成"
+
+# 显示映射结果摘要
+echo ""
+log_install "=== 配置生成摘要 ==="
+log_install "可用硬盘LED: ${available_disk_leds[*]}"
+log_install "检测到硬盘: ${hctl_disks[*]}"
+log_install "成功映射: $mapped_count 个硬盘到LED"
+if [[ $mapped_count -lt ${#hctl_disks[@]} ]]; then
+    log_install "WARNING: 有 $((${#hctl_disks[@]} - mapped_count)) 个硬盘无对应LED"
+fi
+echo ""
 
 # 安装systemd服务
 log_install "安装systemd服务..."
