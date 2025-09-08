@@ -19,7 +19,7 @@ INSTALL_DIR="/opt/ugreen-led-controller"
 LOG_DIR="/var/log/llled"
 
 # 全局版本号
-LLLED_VERSION="3.3.1"
+LLLED_VERSION="3.3.6"
 
 # 支持的UGREEN设备列表
 SUPPORTED_MODELS=(
@@ -45,6 +45,8 @@ handle_error() {
     echo -e "${YELLOW}建议: 检查网络连接和权限设置${NC}"
     exit $exit_code
 }
+
+
 
 # 设置错误捕获
 set -eE
@@ -272,14 +274,53 @@ fi
 log_install "设置文件权限..."
 chmod +x *.sh scripts/*.sh ugreen_leds_cli 2>/dev/null
 
-# 创建命令链接 - 优先使用新版本
+# 创建命令链接 - 使用led_daemon.sh作为主入口
 log_install "创建命令链接..."
-if [[ -f "$INSTALL_DIR/ugreen_led_controller.sh" ]]; then
-    ln -sf "$INSTALL_DIR/ugreen_led_controller.sh" /usr/local/bin/LLLED
+if [[ -f "scripts/led_daemon.sh" ]]; then
+    # 创建LLLED命令脚本
+    cat > /usr/local/bin/LLLED << 'EOF'
+#!/bin/bash
+INSTALL_DIR="/opt/ugreen-led-controller"
+if [[ "$1" == "start" ]]; then
+    echo "启动LED监控服务..."
+    systemctl start ugreen-led-monitor.service
+elif [[ "$1" == "stop" ]]; then
+    echo "停止LED监控服务..."
+    systemctl stop ugreen-led-monitor.service
+elif [[ "$1" == "status" ]]; then
+    echo "LED监控服务状态:"
+    systemctl status ugreen-led-monitor.service
+elif [[ "$1" == "restart" ]]; then
+    echo "重启LED监控服务..."
+    systemctl restart ugreen-led-monitor.service
+elif [[ "$1" == "test" ]]; then
+    echo "运行LED测试..."
+    if [[ -x "$INSTALL_DIR/scripts/led_test.sh" ]]; then
+        "$INSTALL_DIR/scripts/led_test.sh"
+    else
+        echo "LED测试脚本不存在"
+    fi
+else
+    echo "LLLED v3.3.1 - 绿联LED控制系统"
+    echo ""
+    echo "用法: sudo LLLED [命令]"
+    echo ""
+    echo "命令:"
+    echo "  start    - 启动LED监控服务"
+    echo "  stop     - 停止LED监控服务" 
+    echo "  restart  - 重启LED监控服务"
+    echo "  status   - 查看服务状态"
+    echo "  test     - 运行LED测试"
+    echo ""
+    echo "配置文件位置: $INSTALL_DIR/config/"
+    echo "日志位置: /var/log/llled/"
+fi
+EOF
+    chmod +x /usr/local/bin/LLLED
     log_install "SUCCESS: LLLED命令创建成功 (v$LLLED_VERSION)"
 else
-    log_install "ERROR: 主控制脚本未找到"
-    echo -e "${RED}错误: 主控制脚本未找到${NC}"
+    log_install "ERROR: LED守护进程脚本未找到"
+    echo -e "${RED}错误: LED守护进程脚本未找到${NC}"
 fi
 
 # 初始化HCTL映射
@@ -313,8 +354,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=root
-ExecStart=$INSTALL_DIR/scripts/led_daemon.sh start
-ExecStop=$INSTALL_DIR/scripts/led_daemon.sh stop
+ExecStart=$INSTALL_DIR/scripts/led_daemon.sh _daemon_process
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -346,7 +386,7 @@ echo -e "${CYAN}║  使用命令: sudo LLLED                 ║${NC}"
 echo -e "${CYAN}║                                        ║${NC}"
 echo -e "${CYAN}║  🆕 新增功能:                         ║${NC}"
 echo -e "${CYAN}║  ✨ 全局版本号管理                    ║${NC}"
-echo -e "${CYAN}║  � HCTL硬盘智能映射                  ║${NC}"
+echo -e "${CYAN}║  🔧 HCTL硬盘智能映射                  ║${NC}"
 echo -e "${CYAN}║  🎨 智能颜色配置                      ║${NC}"
 echo -e "${CYAN}║  🚀 增强后台服务                      ║${NC}"
 echo -e "${CYAN}║  🔄 自动硬盘状态检测                  ║${NC}"
@@ -357,16 +397,16 @@ echo -e "\n${CYAN}================================${NC}"
 echo -e "${CYAN}安装验证${NC}"
 echo -e "${CYAN}================================${NC}"
 echo "安装目录: $INSTALL_DIR"
-echo "优化版主程序: $(ls -la "$INSTALL_DIR/ugreen_led_controller_optimized.sh" 2>/dev/null || echo "未找到")"
-echo "标准版主程序: $(ls -la "$INSTALL_DIR/ugreen_led_controller.sh" 2>/dev/null || echo "未找到")"
+echo "LED守护进程: $(ls -la "$INSTALL_DIR/scripts/led_daemon.sh" 2>/dev/null || echo "未找到")"
 echo "LED控制程序: $(ls -la "$INSTALL_DIR/ugreen_leds_cli" 2>/dev/null || echo "未找到")"
 echo "命令链接: $(ls -la /usr/local/bin/LLLED 2>/dev/null || echo "未找到")"
+echo "服务状态: $(systemctl is-enabled ugreen-led-monitor.service 2>/dev/null || echo "未启用")"
 echo
 
 echo -e "${CYAN}================================${NC}"
 echo -e "${CYAN}📖 使用说明${NC}"
 echo -e "${CYAN}================================${NC}"
-echo -e "${GREEN}使用命令: sudo LLLED${NC}        # �️ LED控制面板"
+echo -e "${GREEN}使用命令: sudo LLLED${NC}        # 🎛️ LED控制面板"
 echo ""
 echo -e "${YELLOW}项目地址: https://github.com/${GITHUB_REPO}${NC}"
 echo ""
