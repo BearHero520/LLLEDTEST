@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 绿联LED控制工具 - 一键安装脚本 (修复版)
-# 版本: 3.4.0
+# 版本: 3.4.6
 # 更新时间: 2025-09-08
 # 修复: 添加超时保护和错误处理机制，修复下载计数器问题
 
@@ -19,7 +19,7 @@ INSTALL_DIR="/opt/ugreen-led-controller"
 LOG_DIR="/var/log/llled"
 
 # 全局版本号
-LLLED_VERSION="3.4.0"
+LLLED_VERSION="3.4.6"
 
 # 支持的UGREEN设备列表
 SUPPORTED_MODELS=(
