@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# 智能硬盘状态设置脚本 - HCTL版本 v3.0.0
+# 智能硬盘状态设置脚本 - HCTL版本 v3.1.0 (修复版)
 # 根据硬盘活动状态、休眠状态自动设置LED颜色和亮度
 # 支持HCTL智能映射、自动更新和多盘位
-# v3.0.0: 采用白色系配色方案，支持自动保存HCTL映射到配置文件
+# v3.1.0: 添加超时保护和错误处理机制
 
 # 颜色定义
 RED='\033[0;31m'
@@ -15,8 +15,8 @@ MAGENTA='\033[0;35m'
 NC='\033[0m'
 
 # 版本信息
-SCRIPT_VERSION="3.0.0"
-LAST_UPDATE="2025-09-06"
+SCRIPT_VERSION="3.1.0"
+LAST_UPDATE="2025-09-08"
 
 # 获取脚本目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -37,6 +37,48 @@ declare -A CURRENT_HCTL_MAP
 UPDATE_MAPPING=false
 SAVE_CONFIG=false
 INTERACTIVE_MODE=false
+
+# 错误处理函数
+handle_timeout_error() {
+    local command="$1"
+    local timeout="$2"
+    echo -e "${RED}错误: 命令超时 (${timeout}秒): $command${NC}" >&2
+    return 1
+}
+
+# 带超时的命令执行函数
+run_with_timeout() {
+    local timeout="$1"
+    shift
+    local cmd="$*"
+    
+    if timeout "$timeout" bash -c "$cmd" 2>/dev/null; then
+        return 0
+    else
+        handle_timeout_error "$cmd" "$timeout"
+        return 1
+    fi
+}
+
+# 安全的LED控制函数
+safe_led_control() {
+    local led="$1"
+    shift
+    local args="$*"
+    
+    if [[ ! -x "$UGREEN_CLI" ]]; then
+        echo -e "${RED}错误: LED控制程序不存在: $UGREEN_CLI${NC}" >&2
+        return 1
+    fi
+    
+    # 添加3秒超时保护
+    if run_with_timeout 3 "$UGREEN_CLI $led $args"; then
+        return 0
+    else
+        echo -e "${RED}LED控制失败: $led $args${NC}" >&2
+        return 1
+    fi
+}
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -80,11 +122,33 @@ detect_available_leds() {
     echo -e "${CYAN}检测可用LED槽位...${NC}"
     
     local led_status
-    led_status=$("$UGREEN_CLI" all -status 2>/dev/null)
+    # 添加10秒超时保护
+    if ! led_status=$(timeout 10 "$UGREEN_CLI" all -status 2>/dev/null); then
+        echo -e "${YELLOW}LED状态检测超时或失败，尝试单独检测...${NC}"
+        
+        # 尝试单独检测每个LED (更安全的方法)
+        local available_leds=()
+        for i in {1..8}; do
+            local led_name="disk$i"
+            if run_with_timeout 3 "$UGREEN_CLI $led_name -status"; then
+                available_leds+=("$led_name")
+                echo -e "${GREEN}✓ 检测到LED槽位: $led_name${NC}"
+            fi
+        done
+        
+        if [[ ${#available_leds[@]} -gt 0 ]]; then
+            DISK_LEDS=("${available_leds[@]}")
+        else
+            echo -e "${YELLOW}无法检测LED，使用默认LED配置${NC}"
+            DISK_LEDS=("disk1" "disk2" "disk3" "disk4" "disk5" "disk6" "disk7" "disk8")
+        fi
+        
+        echo -e "${BLUE}可用LED槽位 (${#DISK_LEDS[@]}个): ${DISK_LEDS[*]}${NC}"
+        return 0
+    fi
     
     if [[ -z "$led_status" ]]; then
-        echo -e "${YELLOW}无法获取LED状态，使用默认LED配置${NC}"
-        # 使用默认的LED槽位
+        echo -e "${YELLOW}LED状态为空，使用默认LED配置${NC}"
         DISK_LEDS=("disk1" "disk2" "disk3" "disk4" "disk5" "disk6" "disk7" "disk8")
         echo -e "${YELLOW}使用默认LED槽位: ${DISK_LEDS[*]}${NC}"
         return 0

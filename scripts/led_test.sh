@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# LED检测和控制脚本
+# LED检测和控制脚本 v2.0 (修复版)
 # 用于验证实际可用的LED数量和控制LED
+# 添加超时保护和错误处理
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -17,11 +18,23 @@ if [[ "$ACTION" == "--all-on" ]]; then
 elif [[ "$ACTION" == "--all-off" ]]; then
     echo -e "${CYAN}关闭所有LED...${NC}"
 elif [[ "$ACTION" == "--detect" || -z "$ACTION" ]]; then
-    echo -e "${CYAN}=== LED检测测试 ===${NC}"
+    echo -e "${CYAN}=== LED检测测试 v2.0 ===${NC}"
 else
     echo "用法: $0 [--all-on|--all-off|--detect]"
     exit 1
 fi
+
+# 超时控制函数
+run_led_command() {
+    local cmd="$1"
+    local timeout="${2:-3}"
+    
+    if timeout "$timeout" $cmd >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
 
 # 查找LED控制程序
 UGREEN_LEDS_CLI=""

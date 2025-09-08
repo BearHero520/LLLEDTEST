@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# 绿联LED控制工具 - 一键安装脚本
-# 版本: 3.2.6
-# 更新时间: 2025-09-06
-# 唯一安装入口: 本脚本是LLLED系统的唯一安装方式
+# 绿联LED控制工具 - 一键安装脚本 (修复版)
+# 版本: 3.3.0
+# 更新时间: 2025-09-08
+# 修复: 添加超时保护和错误处理机制
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,7 +19,7 @@ INSTALL_DIR="/opt/ugreen-led-controller"
 LOG_DIR="/var/log/llled"
 
 # 全局版本号
-LLLED_VERSION="3.2.8"
+LLLED_VERSION="3.3.0"
 
 # 支持的UGREEN设备列表
 SUPPORTED_MODELS=(
@@ -35,16 +35,58 @@ SUPPORTED_MODELS=(
 # 检查root权限
 [[ $EUID -ne 0 ]] && { echo -e "${RED}需要root权限: sudo bash $0${NC}"; exit 1; }
 
+# 错误处理函数
+handle_error() {
+    local exit_code=$1
+    local line_number=$2
+    local command="$3"
+    echo -e "${RED}错误: 命令失败 (退出码: $exit_code, 行: $line_number)${NC}"
+    echo -e "${RED}失败的命令: $command${NC}"
+    echo -e "${YELLOW}建议: 检查网络连接和权限设置${NC}"
+    exit $exit_code
+}
+
+# 设置错误捕获
+set -eE
+trap 'handle_error $? $LINENO "$BASH_COMMAND"' ERR
+
+# 超时下载函数
+download_with_timeout() {
+    local url="$1"
+    local output="$2"
+    local timeout="${3:-30}"
+    
+    echo "下载: $url"
+    if command -v wget >/dev/null 2>&1; then
+        timeout "$timeout" wget -q --show-progress --progress=bar:force:noscroll -O "$output" "$url" 2>/dev/null || {
+            echo -e "${RED}下载失败，尝试使用curl...${NC}"
+            timeout "$timeout" curl -fsSL "$url" -o "$output" || {
+                echo -e "${RED}下载失败: $url${NC}"
+                return 1
+            }
+        }
+    elif command -v curl >/dev/null 2>&1; then
+        timeout "$timeout" curl -fsSL "$url" -o "$output" || {
+            echo -e "${RED}下载失败: $url${NC}"
+            return 1
+        }
+    else
+        echo -e "${RED}错误: 未找到 wget 或 curl${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}下载完成: $output${NC}"
+}
+
 echo -e "${CYAN}================================${NC}"
 echo -e "${CYAN}LLLED 一键安装工具 v${LLLED_VERSION}${NC}"
 echo -e "${CYAN}================================${NC}"
-echo "更新时间: 2025-09-06"
-echo -e "${BLUE}新增功能:${NC}"
-echo "  • 全局版本号管理"
-echo "  • HCTL硬盘位置映射全局配置化"
-echo "  • 智能颜色配置(电源/网络/硬盘)"
-echo "  • 增强的后台服务管理"
-echo "  • 自动硬盘状态检测与重映射"
+echo "更新时间: 2025-09-08"
+echo -e "${BLUE}修复内容:${NC}"
+echo "  • 添加超时保护机制"
+echo "  • 完善错误处理和恢复"
+echo "  • 修复守护进程启动问题"
+echo "  • 优化systemd服务配置"
+echo "  • 增强脚本稳定性"
 echo
 echo -e "${YELLOW}支持的UGREEN设备:${NC}"
 for model in "${SUPPORTED_MODELS[@]}"; do
@@ -123,20 +165,16 @@ cd "$INSTALL_DIR"
 
 log_install "下载LLLED v$LLLED_VERSION文件..."
 files=(
-    "ugreen_led_controller.sh"
-    "ugreen_led_controller_optimized.sh"
     "uninstall.sh"
     "verify_detection.sh"
     "ugreen_leds_cli"
     "scripts/disk_status_leds.sh"
     "scripts/turn_off_all_leds.sh"
     "scripts/rainbow_effect.sh"
-    "scripts/smart_disk_activity.sh"
     "scripts/smart_disk_activity_hctl.sh"
     "scripts/custom_modes.sh"
     "scripts/led_mapping_test.sh"
     "scripts/led_test.sh"
-    "scripts/configure_mapping.sh"
     "scripts/configure_mapping_optimized.sh"
     "scripts/led_daemon.sh"
     "config/global_config.conf"
