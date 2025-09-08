@@ -29,6 +29,7 @@ AVAILABLE_LEDS=()
 actual_disk_leds=()  # 存储检测到的硬盘LED
 DAEMON_RUNNING=true
 CHECK_INTERVAL=30  # 改为30秒检测一次
+LAST_FORCE_UPDATE=0  # 上次强制更新时间戳
 
 # 创建必要目录
 mkdir -p "$LOG_DIR"
@@ -1006,10 +1007,24 @@ update_disk_leds() {
         # hdparm成功 - 检查状态是否有变化
         if [[ "$hdparm_success" == true ]]; then
             local cached_status="${DISK_STATUS_CACHE[$disk_device]:-}"
+            local force_update=false
             
-            # 只有状态变化时才更新LED（避免无效更新）
-            if [[ "$disk_status" != "$cached_status" ]]; then
-                log_message "DEBUG" "硬盘 $disk_device 状态变化: $cached_status -> $disk_status"
+            # 检查是否需要强制更新（每5分钟强制更新一次，防止外部修改LED状态）
+            local current_time=$(date +%s)
+            local last_force_update="${LAST_FORCE_UPDATE:-0}"
+            if (( current_time - last_force_update >= 300 )); then
+                force_update=true
+                LAST_FORCE_UPDATE="$current_time"
+                log_message "DEBUG" "执行定期强制LED状态更新"
+            fi
+            
+            # 状态变化或强制更新时才更新LED
+            if [[ "$disk_status" != "$cached_status" ]] || [[ "$force_update" == true ]]; then
+                if [[ "$disk_status" != "$cached_status" ]]; then
+                    log_message "DEBUG" "硬盘 $disk_device 状态变化: $cached_status -> $disk_status"
+                else
+                    log_message "DEBUG" "硬盘 $disk_device 强制更新LED状态: $disk_status"
+                fi
                 
                 # 更新状态缓存
                 DISK_STATUS_CACHE["$disk_device"]="$disk_status"
