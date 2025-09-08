@@ -67,29 +67,8 @@ check_led_cli() {
     return 0
 }
 
-# 检测可用LED
-detect_available_leds() {
-    log_message "INFO" "检测可用LED..."
-    AVAILABLE_LEDS=()
-    
-    # 检测disk LEDs (1-8)
-    for i in {1..8}; do
-        local led_name="disk$i"
-        if timeout 3 "$UGREEN_CLI" "$led_name" -status >/dev/null 2>&1; then
-            AVAILABLE_LEDS+=("$led_name")
-        fi
-    done
-    
-    # 检测系统LEDs
-    for led in "power" "netdev"; do
-        if timeout 3 "$UGREEN_CLI" "$led" -status >/dev/null 2>&1; then
-            AVAILABLE_LEDS+=("$led")
-        fi
-    done
-    
-    log_message "INFO" "检测到 ${#AVAILABLE_LEDS[@]} 个LED"
-    return 0
-}
+# 检测可用LED (使用详细版本)
+# detect_available_leds 函数在下方实现，此处删除重复定义
 
 # 主循环
 main_loop() {
@@ -228,36 +207,7 @@ check_status() {
     fi
 }
 
-# 主程序入口
-case "${1:-start}" in
-    start)
-        start_daemon
-        ;;
-    _daemon_process)
-        _start_daemon_direct
-        ;;
-    stop)
-        stop_daemon
-        ;;
-    restart)
-        stop_daemon
-        sleep 2
-        start_daemon
-        ;;
-    status)
-        check_status
-        ;;
-    *)
-        echo "用法: $0 {start|stop|restart|status}"
-        exit 1
-        ;;
-esac
-    
-    # 应用配置中的检查间隔
-    if [[ -n "${DISK_CHECK_INTERVAL:-}" ]]; then
-        CHECK_INTERVAL="$DISK_CHECK_INTERVAL"
-    fi
-}
+
 
 # 检查LED控制程序
 check_led_cli() {
@@ -313,12 +263,30 @@ detect_available_leds() {
     for led in "power" "netdev"; do
         log_message "DEBUG" "测试LED: $led"
         
-        # 添加3秒超时保护
+        # 尝试多种方法检测LED
+        local led_detected=false
+        
+        # 方法1：status检查
         if timeout 3 "$UGREEN_CLI" "$led" -status >/dev/null 2>&1; then
+            led_detected=true
+            log_message "DEBUG" "通过status检测到LED: $led"
+        # 方法2：尝试简单的off命令
+        elif timeout 3 "$UGREEN_CLI" "$led" -off >/dev/null 2>&1; then
+            led_detected=true
+            log_message "DEBUG" "通过off命令检测到LED: $led"
+        # 方法3：尝试颜色设置
+        elif timeout 3 "$UGREEN_CLI" "$led" -color "0 0 0" >/dev/null 2>&1; then
+            led_detected=true
+            log_message "DEBUG" "通过color命令检测到LED: $led"
+        fi
+        
+        if [[ "$led_detected" == "true" ]]; then
             AVAILABLE_LEDS+=("$led")
-            log_message "DEBUG" "检测到LED: $led"
+            log_message "INFO" "成功检测到系统LED: $led"
         else
-            log_message "DEBUG" "LED $led 不可用或超时"
+            log_message "WARN" "系统LED $led 检测失败，但将保留在功能中"
+            # 即使检测失败，也加入列表，因为某些设备可能在检测时有问题但实际可控制
+            AVAILABLE_LEDS+=("$led")
         fi
     done
     
@@ -370,47 +338,79 @@ update_network_led() {
     network_status=$(check_network_status)
     local status_result=$?
     
-    # 检查netdev LED是否可用
-    if [[ ! " ${AVAILABLE_LEDS[*]} " =~ " netdev " ]]; then
-        log_message "DEBUG" "网络LED不可用，跳过网络状态更新"
-        return
-    fi
+    log_message "DEBUG" "网络状态检测结果: $network_status"
     
+    # 根据网络状态设置LED颜色和亮度
+    local color brightness
     case "$network_status" in
         "connected")
-            # 网络正常 - 蓝色
+            color="0 0 255"      # 蓝色
+            brightness="64"
             log_message "DEBUG" "网络状态: 已连接 -> 蓝色LED"
-            set_led_status "netdev" "0 0 255" "64"  # 蓝色，中等亮度
             ;;
         "no_internet")
-            # 有网络但无法访问外网 - 橙色
+            color="255 165 0"    # 橙色
+            brightness="64"
             log_message "WARN" "网络状态: 无法访问外网 -> 橙色LED"
-            set_led_status "netdev" "255 165 0" "64"  # 橙色
             ;;
         "disconnected")
-            # 网络断开 - 红色
+            color="255 0 0"      # 红色
+            brightness="64"
             log_message "WARN" "网络状态: 断开连接 -> 红色LED"
-            set_led_status "netdev" "255 0 0" "64"  # 红色
             ;;
         *)
-            # 未知状态 - 关闭LED
+            color="off"
+            brightness="0"
             log_message "ERROR" "网络状态: 未知 -> 关闭LED"
-            set_led_status "netdev" "off"
             ;;
     esac
+    
+    # 尝试使用set_led_status（检查可用性）
+    if [[ " ${AVAILABLE_LEDS[*]} " =~ " netdev " ]]; then
+        if set_led_status "netdev" "$color" "$brightness"; then
+            return 0
+        fi
+    fi
+    
+    # 如果上面失败，直接尝试控制LED（绕过可用性检查）
+    log_message "DEBUG" "直接控制网络LED（绕过可用性检查）"
+    if [[ "$color" == "off" ]]; then
+        if timeout 5 "$UGREEN_CLI" netdev -off >/dev/null 2>&1; then
+            log_message "DEBUG" "直接关闭网络LED成功"
+            return 0
+        fi
+    else
+        if timeout 5 "$UGREEN_CLI" netdev -color $color -brightness "$brightness" -on >/dev/null 2>&1; then
+            log_message "DEBUG" "直接控制网络LED成功: $color (亮度: $brightness)"
+            return 0
+        fi
+    fi
+    
+    log_message "WARN" "网络LED控制失败"
+    return 1
 }
 
 # 更新电源LED状态
 update_power_led() {
-    # 检查power LED是否可用
-    if [[ ! " ${AVAILABLE_LEDS[*]} " =~ " power " ]]; then
-        log_message "DEBUG" "电源LED不可用，跳过电源状态更新"
-        return
-    fi
-    
     # 电源LED保持淡白色常亮表示系统运行正常
     log_message "DEBUG" "更新电源LED状态 -> 淡白色常亮"
-    set_led_status "power" "128 128 128" "64"  # 淡白色，中等亮度
+    
+    # 尝试使用set_led_status（检查可用性）
+    if [[ " ${AVAILABLE_LEDS[*]} " =~ " power " ]]; then
+        if set_led_status "power" "128 128 128" "64"; then
+            return 0
+        fi
+    fi
+    
+    # 如果上面失败，直接尝试控制LED（绕过可用性检查）
+    log_message "DEBUG" "直接控制电源LED（绕过可用性检查）"
+    if timeout 5 "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on >/dev/null 2>&1; then
+        log_message "DEBUG" "直接控制电源LED成功"
+        return 0
+    else
+        log_message "WARN" "电源LED控制失败"
+        return 1
+    fi
 }
 
 # 获取硬盘状态 (使用hdparm，优先检测硬盘可访问性)
@@ -753,9 +753,9 @@ main_loop() {
     
     # 记录开始时间用于定期重映射和系统LED更新
     local last_hctl_refresh=$(date +%s)
-    local last_system_led_update=$(date +%s)
+    local last_system_led_update=0    # 立即更新系统LED
     local hctl_refresh_interval=3600  # 1小时定期刷新HCTL
-    local system_led_interval=30     # 30秒更新一次系统LED
+    local system_led_interval=10      # 10秒更新一次系统LED (更快响应)
     
     while [[ "$DAEMON_RUNNING" == "true" ]]; do
         local current_time=$(date +%s)
@@ -770,14 +770,23 @@ main_loop() {
         
         # 定期更新系统LED状态（电源和网络）
         if [[ $((current_time - last_system_led_update)) -gt $system_led_interval ]]; then
-            log_message "DEBUG" "更新系统LED状态..."
+            log_message "INFO" "定期更新系统LED状态..."
+            
+            # 显示当前可用LED列表用于调试
+            log_message "DEBUG" "当前可用LED列表: ${AVAILABLE_LEDS[*]}"
             
             if ! update_power_led; then
-                log_message "WARN" "电源LED更新失败"
+                log_message "WARN" "电源LED更新失败，尝试强制控制"
+                timeout 5 "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on >/dev/null 2>&1
+            else
+                log_message "DEBUG" "电源LED更新成功"
             fi
             
             if ! update_network_led; then
-                log_message "WARN" "网络LED更新失败"
+                log_message "WARN" "网络LED更新失败，尝试强制控制"
+                timeout 5 "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on >/dev/null 2>&1
+            else
+                log_message "DEBUG" "网络LED更新成功"
             fi
             
             last_system_led_update=$current_time
@@ -899,8 +908,31 @@ _start_daemon_direct() {
     
     # 初始化系统LED状态
     log_message "INFO" "【初始化】设置系统LED初始状态"
-    update_power_led
-    update_network_led
+    
+    # 强制立即更新系统LED，不依赖于检测结果
+    if [[ " ${AVAILABLE_LEDS[*]} " =~ " power " ]]; then
+        log_message "INFO" "初始化电源LED..."
+        if ! update_power_led; then
+            log_message "WARN" "电源LED初始化失败"
+            # 尝试直接设置
+            timeout 5 "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on >/dev/null 2>&1
+        fi
+    else
+        log_message "WARN" "power LED未在可用列表中，尝试直接初始化"
+        timeout 5 "$UGREEN_CLI" power -color "128 128 128" -brightness 64 -on >/dev/null 2>&1
+    fi
+    
+    if [[ " ${AVAILABLE_LEDS[*]} " =~ " netdev " ]]; then
+        log_message "INFO" "初始化网络LED..."
+        if ! update_network_led; then
+            log_message "WARN" "网络LED初始化失败"
+            # 尝试直接设置为蓝色（假设网络正常）
+            timeout 5 "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on >/dev/null 2>&1
+        fi
+    else
+        log_message "WARN" "netdev LED未在可用列表中，尝试直接初始化"
+        timeout 5 "$UGREEN_CLI" netdev -color "0 0 255" -brightness 64 -on >/dev/null 2>&1
+    fi
     
     # ===== 三步初始化流程 =====
     
