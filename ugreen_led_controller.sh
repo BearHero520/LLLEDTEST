@@ -60,15 +60,32 @@ turn_off_all_leds() {
     local leds=($(get_all_leds))
     
     if [[ ${#leds[@]} -eq 0 ]]; then
-        # 备用方法
-        for led in power netdev disk1 disk2 disk3 disk4 disk5 disk6 disk7 disk8; do
+        # 备用方法：先尝试 all 参数
+        "$UGREEN_CLI" all -off >/dev/null 2>&1 || true
+        
+        # 如果 all 参数失败，尝试系统LED和常见硬盘LED
+        for led in power netdev; do
             "$UGREEN_CLI" "$led" -off 2>/dev/null || true
         done
+        
+        # 从配置文件读取实际存在的硬盘LED
+        if [[ -f "$CONFIG_DIR/led_config.conf" ]]; then
+            source "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+            for i in {1..8}; do
+                local var_name="DISK${i}_LED"
+                if [[ -n "${!var_name:-}" ]]; then
+                    "$UGREEN_CLI" "disk$i" -off 2>/dev/null || true
+                fi
+            done
+        fi
     else
         for led in "${leds[@]}"; do
             "$UGREEN_CLI" "$led" -off 2>/dev/null || true
         done
     fi
+    
+    # 确保所有LED关闭
+    "$UGREEN_CLI" all -off >/dev/null 2>&1 || true
     
     echo -e "${GREEN}✓ 所有LED已关闭${NC}"
 }
@@ -81,10 +98,20 @@ turn_on_all_leds() {
     local brightness="${DEFAULT_BRIGHTNESS:-64}"
     
     if [[ ${#leds[@]} -eq 0 ]]; then
-        # 备用方法
-        for led in power netdev disk1 disk2 disk3 disk4 disk5 disk6 disk7 disk8; do
+        # 备用方法：从配置文件读取实际存在的LED
+        for led in power netdev; do
             "$UGREEN_CLI" "$led" -color $color -brightness $brightness -on 2>/dev/null || true
         done
+        
+        if [[ -f "$CONFIG_DIR/led_config.conf" ]]; then
+            source "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+            for i in {1..8}; do
+                local var_name="DISK${i}_LED"
+                if [[ -n "${!var_name:-}" ]]; then
+                    "$UGREEN_CLI" "disk$i" -color $color -brightness $brightness -on 2>/dev/null || true
+                fi
+            done
+        fi
     else
         for led in "${leds[@]}"; do
             "$UGREEN_CLI" "$led" -color $color -brightness $brightness -on 2>/dev/null || true
@@ -141,15 +168,35 @@ show_mapping_status() {
         echo "  电源LED: ID ${POWER_LED:-0}"
         echo "  网络LED: ID ${NETDEV_LED:-1}"
         
-        # 显示硬盘LED
+        # 显示硬盘LED - 从配置文件读取实际存在的LED
         local disk_count=0
-        for i in {1..8}; do
-            local var_name="DISK${i}_LED"
-            if [[ -n "${!var_name:-}" ]]; then
-                echo "  硬盘${i}LED: ID ${!var_name}"
-                ((disk_count++))
-            fi
-        done
+        local disk_leds=()
+        
+        # 优先从配置文件读取
+        if [[ -f "$CONFIG_DIR/led_config.conf" ]]; then
+            source "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+            for i in {1..8}; do
+                local var_name="DISK${i}_LED"
+                if [[ -n "${!var_name:-}" ]]; then
+                    echo "  硬盘${i}LED: ID ${!var_name}"
+                    disk_leds+=("disk$i")
+                    ((disk_count++))
+                fi
+            done
+        fi
+        
+        # 如果配置文件没有，尝试从实际检测
+        if [[ $disk_count -eq 0 ]]; then
+            local detected_leds=($(get_all_leds))
+            for led in "${detected_leds[@]}"; do
+                if [[ "$led" =~ ^disk[0-9]+$ ]]; then
+                    echo "  检测到LED: $led"
+                    disk_leds+=("$led")
+                    ((disk_count++))
+                fi
+            done
+        fi
+        
         echo "  检测到 $disk_count 个硬盘LED"
         echo
     fi

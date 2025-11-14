@@ -20,7 +20,7 @@ CONFIG_DIR="$INSTALL_DIR/config"
 # ============================================
 # 版本号定义（单一来源）
 # ============================================
-VERSION="4.0.0"
+VERSION="4.0.1"
 LLLED_VERSION="$VERSION"
 
 # 检查root权限
@@ -122,13 +122,44 @@ detect_and_configure() {
         return 1
     fi
     
-    # 检测可用LED
+    # 检测可用LED - 使用 all -status 获取实际存在的LED
     local detected_disk_leds=()
-    for i in {1..8}; do
-        if timeout 3 "$UGREEN_CLI" "disk$i" -status >/dev/null 2>&1; then
-            detected_disk_leds+=("disk$i")
-        fi
-    done
+    local all_status
+    all_status=$("$UGREEN_CLI" all -status 2>/dev/null)
+    
+    if [[ -n "$all_status" ]]; then
+        # 从 all -status 输出中解析硬盘LED
+        while IFS= read -r line; do
+            # 匹配格式: disk1: status = off, ...
+            if [[ "$line" =~ ^disk([0-9]+): ]]; then
+                local disk_num="${BASH_REMATCH[1]}"
+                detected_disk_leds+=("disk$disk_num")
+            fi
+        done <<< "$all_status"
+    else
+        # 备用方法：逐个检测，但遇到连续失败就停止
+        log_install "无法获取all状态，使用逐个检测方法..."
+        local fail_count=0
+        for i in {1..8}; do
+            local status_output
+            status_output=$("$UGREEN_CLI" "disk$i" -status 2>&1)
+            local exit_code=$?
+            
+            # 检查是否真的存在（不是错误信息）
+            if [[ $exit_code -eq 0 ]] && [[ -n "$status_output" ]] && \
+               ! echo "$status_output" | grep -qi "error\|not found\|invalid"; then
+                detected_disk_leds+=("disk$i")
+                fail_count=0  # 重置失败计数
+            else
+                ((fail_count++))
+                # 连续3个失败就停止检测
+                if [[ $fail_count -ge 3 ]]; then
+                    log_install "连续检测失败，停止LED检测（已检测到 ${#detected_disk_leds[@]} 个）"
+                    break
+                fi
+            fi
+        done
+    fi
     
     # 生成LED映射配置
     cat > "$INSTALL_DIR/config/led_config.conf" << EOF
@@ -178,7 +209,34 @@ NETWORK_CHECK_INTERVAL=60
 SYSTEM_LED_UPDATE_INTERVAL=60
 EOF
     
+    # 验证检测结果：LED数量应该与实际硬盘数量匹配
+    # 先检测实际硬盘数量
+    local actual_disk_count=0
+    while IFS= read -r line; do
+        [[ "$line" =~ ^NAME ]] && continue
+        [[ -z "$line" ]] && continue
+        if [[ "$line" =~ ^([a-z]+)[[:space:]]+([0-9]+:[0-9]+:[0-9]+:[0-9]+) ]]; then
+            local disk_name="${BASH_REMATCH[1]}"
+            local disk_device="/dev/$disk_name"
+            local transport=$(lsblk -d -n -o TRAN "$disk_device" 2>/dev/null || echo "")
+            if [[ "$transport" == "sata" ]]; then
+                ((actual_disk_count++))
+            fi
+        fi
+    done < <(lsblk -S -x hctl -o name,hctl 2>/dev/null)
+    
+    # 如果检测到的LED数量明显多于实际硬盘数量，进行修正
+    if [[ ${#detected_disk_leds[@]} -gt $actual_disk_count ]] && [[ $actual_disk_count -gt 0 ]]; then
+        log_install "警告: 检测到 ${#detected_disk_leds[@]} 个LED，但只有 $actual_disk_count 个SATA硬盘"
+        log_install "修正LED数量以匹配实际硬盘数量"
+        # 只保留前 N 个LED（N = 实际硬盘数量）
+        detected_disk_leds=("${detected_disk_leds[@]:0:$actual_disk_count}")
+    fi
+    
     log_install "检测到 ${#detected_disk_leds[@]} 个硬盘LED: ${detected_disk_leds[*]}"
+    if [[ $actual_disk_count -gt 0 ]]; then
+        log_install "实际SATA硬盘数量: $actual_disk_count"
+    fi
     
     # 生成硬盘映射
     generate_disk_mapping "${detected_disk_leds[@]}"
