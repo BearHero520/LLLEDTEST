@@ -20,7 +20,7 @@ CONFIG_DIR="$INSTALL_DIR/config"
 # ============================================
 # 版本号定义（单一来源）
 # ============================================
-VERSION="4.0.1"
+VERSION="4.1.0"
 LLLED_VERSION="$VERSION"
 
 # 检查root权限
@@ -112,6 +112,110 @@ download_files() {
     fi
 }
 
+# === 型号映射工具函数 ===
+
+# 默认槽位顺序
+get_default_slot_order() {
+    echo "disk1 disk2 disk3 disk4 disk5 disk6 disk7 disk8"
+}
+
+# 根据型号返回槽位顺序
+get_slot_order_for_model() {
+    local model="$1"
+    case "$model" in
+        DXP6800*|UGREEN\ DXP6800*)
+            echo "disk5 disk6 disk1 disk2 disk3 disk4"
+            ;;
+        DXP4800*|DX4600*|DX4700*|UGREEN\ DX4600*|UGREEN\ DX4700*|UGREEN\ DXP4800*)
+            echo "disk1 disk2 disk3 disk4"
+            ;;
+        DXP8800*|UGREEN\ DXP8800*)
+            echo "disk1 disk2 disk3 disk4 disk5 disk6 disk7 disk8"
+            ;;
+        *)
+            get_default_slot_order
+            ;;
+    esac
+}
+
+# 自动检测设备型号
+detect_device_model() {
+    local product="UNKNOWN"
+    if command -v dmidecode >/dev/null 2>&1; then
+        product=$(dmidecode --string system-product-name 2>/dev/null | head -n1 | tr -d '\r')
+    fi
+    echo "${product:-UNKNOWN}"
+}
+
+# 选择映射配置（傻瓜式）
+select_model_mapping() {
+    local auto_model
+    auto_model=$(detect_device_model)
+    local auto_order
+    auto_order=$(get_slot_order_for_model "$auto_model")
+    
+    echo
+    echo "检测到的设备型号: ${auto_model}"
+    echo "请选择硬盘映射方式:"
+    echo "  1) 自动检测 (推荐)"
+    echo "  2) DX4600 / DX4700 / DXP4800 系列"
+    echo "  3) DXP6800 系列"
+    echo "  4) DXP8800 系列"
+    echo "  5) 自定义顺序"
+    echo "  6) 使用默认顺序 (disk1..disk8)"
+    echo
+    read -p "请选择 [1-6] (默认 1): " mapping_choice
+    
+    local slot_order=""
+    local profile_label=""
+    
+    case "$mapping_choice" in
+        2)
+            slot_order=$(get_slot_order_for_model "DXP4800")
+            profile_label="DXP4800"
+            ;;
+        3)
+            slot_order=$(get_slot_order_for_model "DXP6800")
+            profile_label="DXP6800"
+            ;;
+        4)
+            slot_order=$(get_slot_order_for_model "DXP8800")
+            profile_label="DXP8800"
+            ;;
+        5)
+            read -p "请输入硬盘槽顺序 (例如: disk5 disk6 disk1 disk2): " custom_order
+            custom_order=$(echo "$custom_order" | tr ',' ' ')
+            slot_order=""
+            for token in $custom_order; do
+                if [[ "$token" =~ ^disk[0-9]+$ ]]; then
+                    slot_order+="$token "
+                else
+                    echo "无效槽位: $token (格式应为 diskX)"
+                fi
+            done
+            slot_order=${slot_order:-$(get_default_slot_order)}
+            profile_label="CUSTOM"
+            ;;
+        6)
+            slot_order=$(get_default_slot_order)
+            profile_label="DEFAULT"
+            ;;
+        1|"")
+            slot_order="$auto_order"
+            profile_label="${auto_model:-AUTO}"
+            ;;
+        *)
+            slot_order="$auto_order"
+            profile_label="${auto_model:-AUTO}"
+            ;;
+    esac
+    
+    SELECTED_MODEL_PROFILE="$profile_label"
+    SELECTED_SLOT_ORDER="$slot_order"
+    
+    log_install "使用映射配置: $SELECTED_MODEL_PROFILE -> $SELECTED_SLOT_ORDER"
+}
+
 # 检测LED并生成映射配置
 detect_and_configure() {
     log_install "检测LED并生成映射配置..."
@@ -161,11 +265,20 @@ detect_and_configure() {
         done
     fi
     
+    # 选择映射配置（傻瓜式）
+    SELECTED_MODEL_PROFILE="AUTO"
+    SELECTED_SLOT_ORDER="$(get_default_slot_order)"
+    select_model_mapping
+    
     # 生成LED映射配置
     cat > "$INSTALL_DIR/config/led_config.conf" << EOF
 # UGREEN LED 控制器配置文件
 # 版本: ${VERSION}
 # 生成时间: $(date)
+
+# 映射配置
+MODEL_PROFILE="${SELECTED_MODEL_PROFILE}"
+SLOT_ORDER="${SELECTED_SLOT_ORDER}"
 
 # I2C 设备配置
 I2C_BUS=1
@@ -234,6 +347,7 @@ EOF
     fi
     
     log_install "检测到 ${#detected_disk_leds[@]} 个硬盘LED: ${detected_disk_leds[*]}"
+    log_install "使用映射配置: ${SELECTED_MODEL_PROFILE}"
     if [[ $actual_disk_count -gt 0 ]]; then
         log_install "实际SATA硬盘数量: $actual_disk_count"
     fi
@@ -246,6 +360,21 @@ EOF
 generate_disk_mapping() {
     local disk_leds=("$@")
     log_install "生成硬盘映射配置..."
+
+    # 准备槽位顺序
+    local slot_order=()
+    if [[ -n "$SELECTED_SLOT_ORDER" ]]; then
+        read -r -a slot_order <<< "$SELECTED_SLOT_ORDER"
+    fi
+    if [[ ${#slot_order[@]} -eq 0 ]]; then
+        read -r -a slot_order <<< "$(get_default_slot_order)"
+    fi
+    
+    # LED映射表
+    declare -A SLOT_LED_MAP
+    for led_name in "${disk_leds[@]}"; do
+        SLOT_LED_MAP["$led_name"]="$led_name"
+    done
     
     cat > "$INSTALL_DIR/config/disk_mapping.conf" << EOF
 # 硬盘映射配置文件
@@ -267,14 +396,29 @@ EOF
             
             # 检查是否为SATA设备
             local transport=$(lsblk -d -n -o TRAN "$disk_device" 2>/dev/null || echo "")
-            if [[ "$transport" == "sata" && $disk_index -lt ${#disk_leds[@]} ]]; then
-                local led_name="${disk_leds[$disk_index]}"
-                local model=$(lsblk -dno model "$disk_device" 2>/dev/null || echo "Unknown")
-                local size=$(lsblk -dno size "$disk_device" 2>/dev/null || echo "Unknown")
+            if [[ "$transport" == "sata" ]]; then
+                local slot_name=""
+                if [[ $disk_index -lt ${#slot_order[@]} ]]; then
+                    slot_name="${slot_order[$disk_index]}"
+                fi
                 
-                echo "HCTL_MAPPING[$disk_device]=\"$hctl|$led_name|$serial|$model|$size\"" >> "$INSTALL_DIR/config/disk_mapping.conf"
-                log_install "映射: $disk_device -> $led_name (HCTL: $hctl)"
-                ((disk_index++))
+                local led_name=""
+                if [[ -n "$slot_name" && -n "${SLOT_LED_MAP[$slot_name]}" ]]; then
+                    led_name="${SLOT_LED_MAP[$slot_name]}"
+                elif [[ $disk_index -lt ${#disk_leds[@]} ]]; then
+                    led_name="${disk_leds[$disk_index]}"
+                fi
+                
+                if [[ -z "$led_name" ]]; then
+                    log_install "WARNING: 找不到与槽位 ${slot_name:-unknown} 对应的LED，跳过 $disk_device"
+                else
+                    local model=$(lsblk -dno model "$disk_device" 2>/dev/null || echo "Unknown")
+                    local size=$(lsblk -dno size "$disk_device" 2>/dev/null || echo "Unknown")
+                    
+                    echo "HCTL_MAPPING[$disk_device]=\"$hctl|$led_name|$serial|$model|$size\"" >> "$INSTALL_DIR/config/disk_mapping.conf"
+                    log_install "映射: $disk_device -> $led_name (HCTL: $hctl, 槽位: ${slot_name:-未知})"
+                    ((disk_index++))
+                fi
             fi
         fi
     done < <(lsblk -S -x hctl -o name,hctl,serial 2>/dev/null)
