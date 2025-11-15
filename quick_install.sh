@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 NC='\033[0m'
 
-GITHUB_REPO="BearHero520/LLLEDTEST"
+GITHUB_REPO="BearHero520/LLLED"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 INSTALL_DIR="/opt/ugreen-led-controller"
 LOG_DIR="/var/log/llled"
