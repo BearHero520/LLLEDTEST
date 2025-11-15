@@ -241,6 +241,646 @@ show_mapping_status() {
     echo
 }
 
+# 智能设置菜单
+show_smart_settings_menu() {
+    while true; do
+        # 重新加载配置
+        load_config
+        
+        clear
+        echo -e "${CYAN}================================${NC}"
+        echo -e "${CYAN}智能设置${NC}"
+        echo -e "${CYAN}================================${NC}"
+        echo
+        echo "1. 自动检测LED设备"
+        echo "2. 自动检测硬盘映射"
+        echo "3. 自动配置所有设置"
+        echo "4. 恢复默认配置"
+        echo "5. 返回主菜单"
+        echo
+        read -p "请选择功能 (1-5): " choice
+        
+        case $choice in
+            1)
+                auto_detect_leds
+                ;;
+            2)
+                auto_detect_disk_mapping
+                ;;
+            3)
+                auto_configure_all
+                ;;
+            4)
+                restore_default_config
+                ;;
+            5)
+                return 0
+                ;;
+            *)
+                echo -e "${RED}无效选择${NC}"
+                sleep 1
+                ;;
+        esac
+        
+        if [[ $choice != 5 ]]; then
+            echo
+            read -p "按回车键继续..."
+        fi
+    done
+}
+
+# 自动检测LED设备
+auto_detect_leds() {
+    echo -e "${CYAN}正在自动检测LED设备...${NC}"
+    echo
+    
+    local detected_leds=($(get_all_leds))
+    local led_count=${#detected_leds[@]}
+    
+    if [[ $led_count -eq 0 ]]; then
+        echo -e "${YELLOW}未检测到LED设备，尝试使用备用方法...${NC}"
+        # 尝试检测系统LED
+        for led in power netdev; do
+            if "$UGREEN_CLI" "$led" -status >/dev/null 2>&1; then
+                detected_leds+=("$led")
+                ((led_count++))
+            fi
+        done
+        
+        # 尝试检测硬盘LED
+        for i in {1..8}; do
+            if "$UGREEN_CLI" "disk$i" -status >/dev/null 2>&1; then
+                detected_leds+=("disk$i")
+                ((led_count++))
+            fi
+        done
+    fi
+    
+    if [[ $led_count -gt 0 ]]; then
+        echo -e "${GREEN}✓ 检测到 $led_count 个LED设备:${NC}"
+        for led in "${detected_leds[@]}"; do
+            echo "  - $led"
+        done
+        echo
+        echo -e "${CYAN}LED设备检测完成${NC}"
+    else
+        echo -e "${RED}✗ 未检测到任何LED设备${NC}"
+        echo "请检查LED控制程序是否正确安装"
+    fi
+}
+
+# 自动检测硬盘映射
+auto_detect_disk_mapping() {
+    echo -e "${CYAN}正在自动检测硬盘映射...${NC}"
+    echo
+    
+    if [[ ! -f "$UGREEN_CLI" ]]; then
+        echo -e "${RED}✗ LED控制程序不存在${NC}"
+        return 1
+    fi
+    
+    # 检测所有块设备
+    local disk_count=0
+    local detected_disks=()
+    
+    while IFS= read -r disk; do
+        if [[ -b "$disk" ]] && [[ "$disk" =~ ^/dev/sd[a-z]$ ]] || [[ "$disk" =~ ^/dev/nvme[0-9]+n[0-9]+$ ]]; then
+            # 跳过分区，只检测磁盘
+            if ! [[ "$disk" =~ [0-9]+$ ]]; then
+                detected_disks+=("$disk")
+                ((disk_count++))
+            fi
+        fi
+    done < <(lsblk -d -n -o NAME | sed 's|^|/dev/|')
+    
+    if [[ $disk_count -gt 0 ]]; then
+        echo -e "${GREEN}✓ 检测到 $disk_count 个硬盘:${NC}"
+        for disk in "${detected_disks[@]}"; do
+            local model=$(lsblk -d -n -o MODEL "$disk" 2>/dev/null | head -1)
+            local size=$(lsblk -d -n -o SIZE "$disk" 2>/dev/null | head -1)
+            echo "  - $disk: ${model:-Unknown} (${size:-N/A})"
+        done
+        echo
+        echo -e "${CYAN}硬盘检测完成${NC}"
+        echo -e "${YELLOW}提示: 硬盘映射关系需要在安装时自动配置${NC}"
+    else
+        echo -e "${YELLOW}未检测到硬盘设备${NC}"
+    fi
+}
+
+# 自动配置所有设置
+auto_configure_all() {
+    echo -e "${CYAN}正在自动配置所有设置...${NC}"
+    echo
+    
+    # 1. 检测LED设备
+    echo "步骤 1/3: 检测LED设备..."
+    auto_detect_leds
+    echo
+    
+    # 2. 检测硬盘映射
+    echo "步骤 2/3: 检测硬盘映射..."
+    auto_detect_disk_mapping
+    echo
+    
+    # 3. 检查服务状态
+    echo "步骤 3/3: 检查服务状态..."
+    if systemctl is-active --quiet ugreen-led-monitor.service; then
+        echo -e "${GREEN}✓ 服务正在运行${NC}"
+    else
+        echo -e "${YELLOW}服务未运行，正在启动...${NC}"
+        systemctl start ugreen-led-monitor.service 2>/dev/null && \
+            echo -e "${GREEN}✓ 服务已启动${NC}" || \
+            echo -e "${RED}✗ 服务启动失败${NC}"
+    fi
+    
+    echo
+    echo -e "${GREEN}✓ 自动配置完成${NC}"
+}
+
+# 恢复默认配置
+restore_default_config() {
+    echo -e "${YELLOW}警告: 此操作将恢复所有LED配置为默认值${NC}"
+    read -p "确定要继续吗? (y/N): " confirm
+    
+    if [[ "${confirm,,}" != "y" ]]; then
+        echo "已取消"
+        return 0
+    fi
+    
+    echo -e "${CYAN}正在恢复默认配置...${NC}"
+    
+    # 备份当前配置
+    if [[ -f "$CONFIG_DIR/led_config.conf" ]]; then
+        cp "$CONFIG_DIR/led_config.conf" "$CONFIG_DIR/led_config.conf.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+    fi
+    
+    # 恢复默认颜色配置
+    if [[ -f "$CONFIG_DIR/led_config.conf" ]]; then
+        # 使用sed更新配置值
+        sed -i 's/^POWER_COLOR=.*/POWER_COLOR="128 128 128"/' "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+        sed -i 's/^NETWORK_COLOR_DISCONNECTED=.*/NETWORK_COLOR_DISCONNECTED="255 0 0"/' "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+        sed -i 's/^NETWORK_COLOR_CONNECTED=.*/NETWORK_COLOR_CONNECTED="0 255 0"/' "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+        sed -i 's/^NETWORK_COLOR_INTERNET=.*/NETWORK_COLOR_INTERNET="0 0 255"/' "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+        sed -i 's/^DISK_COLOR_HEALTHY=.*/DISK_COLOR_HEALTHY="255 255 255"/' "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+        sed -i 's/^DISK_COLOR_STANDBY=.*/DISK_COLOR_STANDBY="200 200 200"/' "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+        sed -i 's/^DISK_COLOR_UNHEALTHY=.*/DISK_COLOR_UNHEALTHY="255 0 0"/' "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+        sed -i 's/^DEFAULT_BRIGHTNESS=.*/DEFAULT_BRIGHTNESS=64/' "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+        sed -i 's/^LOW_BRIGHTNESS=.*/LOW_BRIGHTNESS=32/' "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+    fi
+    
+    echo -e "${GREEN}✓ 默认配置已恢复${NC}"
+    echo -e "${YELLOW}提示: 请重启服务使配置生效: sudo systemctl restart ugreen-led-monitor.service${NC}"
+}
+
+# 灯光设置菜单
+show_led_settings_menu() {
+    while true; do
+        # 重新加载配置以确保显示最新值
+        load_config
+        
+        clear
+        echo -e "${CYAN}================================${NC}"
+        echo -e "${CYAN}灯光设置${NC}"
+        echo -e "${CYAN}================================${NC}"
+        echo
+        echo "1. 设置电源LED颜色"
+        echo "2. 设置网络LED颜色"
+        echo "3. 设置硬盘LED颜色"
+        echo "4. 设置亮度"
+        echo "5. 查看当前配置"
+        echo "6. 测试LED效果"
+        echo "7. 返回主菜单"
+        echo
+        read -p "请选择功能 (1-7): " choice
+        
+        case $choice in
+            1)
+                set_power_led_color
+                ;;
+            2)
+                set_network_led_color
+                ;;
+            3)
+                set_disk_led_color
+                ;;
+            4)
+                set_brightness
+                ;;
+            5)
+                show_current_led_config
+                ;;
+            6)
+                test_led_effects
+                ;;
+            7)
+                return 0
+                ;;
+            *)
+                echo -e "${RED}无效选择${NC}"
+                sleep 1
+                ;;
+        esac
+        
+        if [[ $choice != 7 ]]; then
+            echo
+            read -p "按回车键继续..."
+        fi
+    done
+}
+
+# 设置电源LED颜色
+set_power_led_color() {
+    # 重新加载配置
+    load_config
+    
+    echo -e "${CYAN}设置电源LED颜色${NC}"
+    echo
+    echo "当前颜色: ${POWER_COLOR:-128 128 128}"
+    echo "格式: R G B (每个值 0-255，用空格分隔)"
+    echo "示例: 255 0 0 (红色), 0 255 0 (绿色), 0 0 255 (蓝色)"
+    echo
+    read -p "请输入RGB值 (留空使用默认值 128 128 128): " rgb_input
+    
+    if [[ -z "$rgb_input" ]]; then
+        rgb_input="128 128 128"
+    fi
+    
+    # 验证RGB格式
+    if [[ ! "$rgb_input" =~ ^[0-9]+\ +[0-9]+\ +[0-9]+$ ]]; then
+        echo -e "${RED}✗ 格式错误，请输入三个0-255之间的数字，用空格分隔${NC}"
+        return 1
+    fi
+    
+    # 验证RGB值范围
+    local r g b
+    read -r r g b <<< "$rgb_input"
+    if [[ $r -lt 0 || $r -gt 255 || $g -lt 0 || $g -gt 255 || $b -lt 0 || $b -gt 255 ]]; then
+        echo -e "${RED}✗ RGB值必须在0-255之间${NC}"
+        return 1
+    fi
+    
+    # 更新配置文件
+    if [[ -f "$CONFIG_DIR/led_config.conf" ]]; then
+        if grep -q "^POWER_COLOR=" "$CONFIG_DIR/led_config.conf"; then
+            sed -i "s|^POWER_COLOR=.*|POWER_COLOR=\"$rgb_input\"|" "$CONFIG_DIR/led_config.conf"
+        else
+            echo "POWER_COLOR=\"$rgb_input\"" >> "$CONFIG_DIR/led_config.conf"
+        fi
+        echo -e "${GREEN}✓ 电源LED颜色已更新为: $rgb_input${NC}"
+        echo -e "${YELLOW}提示: 请重启服务使配置生效: sudo systemctl restart ugreen-led-monitor.service${NC}"
+    else
+        echo -e "${RED}✗ 配置文件不存在${NC}"
+        return 1
+    fi
+}
+
+# 设置网络LED颜色
+set_network_led_color() {
+    # 重新加载配置
+    load_config
+    
+    echo -e "${CYAN}设置网络LED颜色${NC}"
+    echo
+    echo "当前配置:"
+    echo "  断网状态: ${NETWORK_COLOR_DISCONNECTED:-255 0 0}"
+    echo "  联网状态: ${NETWORK_COLOR_CONNECTED:-0 255 0}"
+    echo "  外网状态: ${NETWORK_COLOR_INTERNET:-0 0 255}"
+    echo
+    echo "请选择要设置的状态:"
+    echo "1. 断网状态 (默认: 255 0 0 红色)"
+    echo "2. 联网状态 (默认: 0 255 0 绿色)"
+    echo "3. 外网状态 (默认: 0 0 255 蓝色)"
+    read -p "请选择 (1-3): " state_choice
+    
+    local config_var=""
+    local default_value=""
+    local state_name=""
+    
+    case $state_choice in
+        1)
+            config_var="NETWORK_COLOR_DISCONNECTED"
+            default_value="255 0 0"
+            state_name="断网状态"
+            ;;
+        2)
+            config_var="NETWORK_COLOR_CONNECTED"
+            default_value="0 255 0"
+            state_name="联网状态"
+            ;;
+        3)
+            config_var="NETWORK_COLOR_INTERNET"
+            default_value="0 0 255"
+            state_name="外网状态"
+            ;;
+        *)
+            echo -e "${RED}无效选择${NC}"
+            return 1
+            ;;
+    esac
+    
+    echo
+    echo "当前${state_name}颜色: ${!config_var:-$default_value}"
+    read -p "请输入RGB值 (留空使用默认值 $default_value): " rgb_input
+    
+    if [[ -z "$rgb_input" ]]; then
+        rgb_input="$default_value"
+    fi
+    
+    # 验证RGB格式
+    if [[ ! "$rgb_input" =~ ^[0-9]+\ +[0-9]+\ +[0-9]+$ ]]; then
+        echo -e "${RED}✗ 格式错误，请输入三个0-255之间的数字，用空格分隔${NC}"
+        return 1
+    fi
+    
+    # 验证RGB值范围
+    local r g b
+    read -r r g b <<< "$rgb_input"
+    if [[ $r -lt 0 || $r -gt 255 || $g -lt 0 || $g -gt 255 || $b -lt 0 || $b -gt 255 ]]; then
+        echo -e "${RED}✗ RGB值必须在0-255之间${NC}"
+        return 1
+    fi
+    
+    # 更新配置文件
+    if [[ -f "$CONFIG_DIR/led_config.conf" ]]; then
+        if grep -q "^${config_var}=" "$CONFIG_DIR/led_config.conf"; then
+            sed -i "s|^${config_var}=.*|${config_var}=\"$rgb_input\"|" "$CONFIG_DIR/led_config.conf"
+        else
+            echo "${config_var}=\"$rgb_input\"" >> "$CONFIG_DIR/led_config.conf"
+        fi
+        echo -e "${GREEN}✓ ${state_name}颜色已更新为: $rgb_input${NC}"
+        echo -e "${YELLOW}提示: 请重启服务使配置生效: sudo systemctl restart ugreen-led-monitor.service${NC}"
+    else
+        echo -e "${RED}✗ 配置文件不存在${NC}"
+        return 1
+    fi
+}
+
+# 设置硬盘LED颜色
+set_disk_led_color() {
+    # 重新加载配置
+    load_config
+    
+    echo -e "${CYAN}设置硬盘LED颜色${NC}"
+    echo
+    echo "当前配置:"
+    echo "  健康状态: ${DISK_COLOR_HEALTHY:-255 255 255}"
+    echo "  休眠状态: ${DISK_COLOR_STANDBY:-200 200 200}"
+    echo "  不健康状态: ${DISK_COLOR_UNHEALTHY:-255 0 0}"
+    echo "  无硬盘状态: ${DISK_COLOR_NO_DISK:-0 0 0}"
+    echo
+    echo "请选择要设置的状态:"
+    echo "1. 健康状态 (默认: 255 255 255 白色)"
+    echo "2. 休眠状态 (默认: 200 200 200 淡白色)"
+    echo "3. 不健康状态 (默认: 255 0 0 红色)"
+    echo "4. 无硬盘状态 (默认: 0 0 0 关闭)"
+    read -p "请选择 (1-4): " state_choice
+    
+    local config_var=""
+    local default_value=""
+    local state_name=""
+    
+    case $state_choice in
+        1)
+            config_var="DISK_COLOR_HEALTHY"
+            default_value="255 255 255"
+            state_name="健康状态"
+            ;;
+        2)
+            config_var="DISK_COLOR_STANDBY"
+            default_value="200 200 200"
+            state_name="休眠状态"
+            ;;
+        3)
+            config_var="DISK_COLOR_UNHEALTHY"
+            default_value="255 0 0"
+            state_name="不健康状态"
+            ;;
+        4)
+            config_var="DISK_COLOR_NO_DISK"
+            default_value="0 0 0"
+            state_name="无硬盘状态"
+            ;;
+        *)
+            echo -e "${RED}无效选择${NC}"
+            return 1
+            ;;
+    esac
+    
+    echo
+    echo "当前${state_name}颜色: ${!config_var:-$default_value}"
+    read -p "请输入RGB值 (留空使用默认值 $default_value): " rgb_input
+    
+    if [[ -z "$rgb_input" ]]; then
+        rgb_input="$default_value"
+    fi
+    
+    # 验证RGB格式
+    if [[ ! "$rgb_input" =~ ^[0-9]+\ +[0-9]+\ +[0-9]+$ ]]; then
+        echo -e "${RED}✗ 格式错误，请输入三个0-255之间的数字，用空格分隔${NC}"
+        return 1
+    fi
+    
+    # 验证RGB值范围
+    local r g b
+    read -r r g b <<< "$rgb_input"
+    if [[ $r -lt 0 || $r -gt 255 || $g -lt 0 || $g -gt 255 || $b -lt 0 || $b -gt 255 ]]; then
+        echo -e "${RED}✗ RGB值必须在0-255之间${NC}"
+        return 1
+    fi
+    
+    # 更新配置文件
+    if [[ -f "$CONFIG_DIR/led_config.conf" ]]; then
+        if grep -q "^${config_var}=" "$CONFIG_DIR/led_config.conf"; then
+            sed -i "s|^${config_var}=.*|${config_var}=\"$rgb_input\"|" "$CONFIG_DIR/led_config.conf"
+        else
+            echo "${config_var}=\"$rgb_input\"" >> "$CONFIG_DIR/led_config.conf"
+        fi
+        echo -e "${GREEN}✓ ${state_name}颜色已更新为: $rgb_input${NC}"
+        echo -e "${YELLOW}提示: 请重启服务使配置生效: sudo systemctl restart ugreen-led-monitor.service${NC}"
+    else
+        echo -e "${RED}✗ 配置文件不存在${NC}"
+        return 1
+    fi
+}
+
+# 设置亮度
+set_brightness() {
+    # 重新加载配置
+    load_config
+    
+    echo -e "${CYAN}设置LED亮度${NC}"
+    echo
+    echo "当前配置:"
+    echo "  默认亮度: ${DEFAULT_BRIGHTNESS:-64}"
+    echo "  低亮度: ${LOW_BRIGHTNESS:-32}"
+    echo "  高亮度: ${HIGH_BRIGHTNESS:-128}"
+    echo
+    echo "请选择要设置的亮度类型:"
+    echo "1. 默认亮度 (0-255，默认: 64)"
+    echo "2. 低亮度 (0-255，默认: 32)"
+    echo "3. 高亮度 (0-255，默认: 128)"
+    read -p "请选择 (1-3): " brightness_choice
+    
+    local config_var=""
+    local default_value=""
+    local brightness_name=""
+    
+    case $brightness_choice in
+        1)
+            config_var="DEFAULT_BRIGHTNESS"
+            default_value="64"
+            brightness_name="默认亮度"
+            ;;
+        2)
+            config_var="LOW_BRIGHTNESS"
+            default_value="32"
+            brightness_name="低亮度"
+            ;;
+        3)
+            config_var="HIGH_BRIGHTNESS"
+            default_value="128"
+            brightness_name="高亮度"
+            ;;
+        *)
+            echo -e "${RED}无效选择${NC}"
+            return 1
+            ;;
+    esac
+    
+    echo
+    echo "当前${brightness_name}: ${!config_var:-$default_value}"
+    read -p "请输入亮度值 (0-255，留空使用默认值 $default_value): " brightness_input
+    
+    if [[ -z "$brightness_input" ]]; then
+        brightness_input="$default_value"
+    fi
+    
+    # 验证亮度值
+    if ! [[ "$brightness_input" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}✗ 请输入0-255之间的数字${NC}"
+        return 1
+    fi
+    
+    if [[ $brightness_input -lt 0 || $brightness_input -gt 255 ]]; then
+        echo -e "${RED}✗ 亮度值必须在0-255之间${NC}"
+        return 1
+    fi
+    
+    # 更新配置文件
+    if [[ -f "$CONFIG_DIR/led_config.conf" ]]; then
+        if grep -q "^${config_var}=" "$CONFIG_DIR/led_config.conf"; then
+            sed -i "s|^${config_var}=.*|${config_var}=$brightness_input|" "$CONFIG_DIR/led_config.conf"
+        else
+            echo "${config_var}=$brightness_input" >> "$CONFIG_DIR/led_config.conf"
+        fi
+        echo -e "${GREEN}✓ ${brightness_name}已更新为: $brightness_input${NC}"
+        echo -e "${YELLOW}提示: 请重启服务使配置生效: sudo systemctl restart ugreen-led-monitor.service${NC}"
+    else
+        echo -e "${RED}✗ 配置文件不存在${NC}"
+        return 1
+    fi
+}
+
+# 查看当前LED配置
+show_current_led_config() {
+    echo -e "${CYAN}================================${NC}"
+    echo -e "${CYAN}当前LED配置${NC}"
+    echo -e "${CYAN}================================${NC}"
+    echo
+    
+    if [[ ! -f "$CONFIG_DIR/led_config.conf" ]]; then
+        echo -e "${RED}配置文件不存在${NC}"
+        return 1
+    fi
+    
+    # 重新加载配置
+    source "$CONFIG_DIR/led_config.conf" 2>/dev/null || true
+    
+    echo -e "${BLUE}电源LED:${NC}"
+    echo "  颜色: ${POWER_COLOR:-128 128 128}"
+    echo
+    
+    echo -e "${BLUE}网络LED:${NC}"
+    echo "  断网: ${NETWORK_COLOR_DISCONNECTED:-255 0 0}"
+    echo "  联网: ${NETWORK_COLOR_CONNECTED:-0 255 0}"
+    echo "  外网: ${NETWORK_COLOR_INTERNET:-0 0 255}"
+    echo
+    
+    echo -e "${BLUE}硬盘LED:${NC}"
+    echo "  健康: ${DISK_COLOR_HEALTHY:-255 255 255}"
+    echo "  休眠: ${DISK_COLOR_STANDBY:-200 200 200}"
+    echo "  不健康: ${DISK_COLOR_UNHEALTHY:-255 0 0}"
+    echo "  无硬盘: ${DISK_COLOR_NO_DISK:-0 0 0}"
+    echo
+    
+    echo -e "${BLUE}亮度设置:${NC}"
+    echo "  默认: ${DEFAULT_BRIGHTNESS:-64}"
+    echo "  低亮度: ${LOW_BRIGHTNESS:-32}"
+    echo "  高亮度: ${HIGH_BRIGHTNESS:-128}"
+    echo
+}
+
+# 测试LED效果
+test_led_effects() {
+    # 重新加载配置
+    load_config
+    
+    echo -e "${CYAN}测试LED效果${NC}"
+    echo
+    echo "此功能将依次测试各个LED，每个LED显示3秒"
+    echo
+    read -p "确定要继续吗? (y/N): " confirm
+    
+    if [[ "${confirm,,}" != "y" ]]; then
+        echo "已取消"
+        return 0
+    fi
+    
+    local test_colors=("255 0 0" "0 255 0" "0 0 255" "255 255 255" "255 255 0" "255 0 255" "0 255 255")
+    local color_names=("红色" "绿色" "蓝色" "白色" "黄色" "紫色" "青色")
+    
+    # 测试电源LED
+    echo -e "${CYAN}测试电源LED...${NC}"
+    for i in "${!test_colors[@]}"; do
+        echo "  显示 ${color_names[$i]}..."
+        "$UGREEN_CLI" power -color ${test_colors[$i]} -brightness 64 -on 2>/dev/null || true
+        sleep 1
+    done
+    # 恢复默认
+    "$UGREEN_CLI" power -color ${POWER_COLOR:-128 128 128} -brightness ${DEFAULT_BRIGHTNESS:-64} -on 2>/dev/null || true
+    echo
+    
+    # 测试网络LED
+    echo -e "${CYAN}测试网络LED...${NC}"
+    for i in "${!test_colors[@]}"; do
+        echo "  显示 ${color_names[$i]}..."
+        "$UGREEN_CLI" netdev -color ${test_colors[$i]} -brightness 64 -on 2>/dev/null || true
+        sleep 1
+    done
+    # 恢复默认
+    "$UGREEN_CLI" netdev -color ${NETWORK_COLOR_CONNECTED:-0 255 0} -brightness ${DEFAULT_BRIGHTNESS:-64} -on 2>/dev/null || true
+    echo
+    
+    # 测试硬盘LED
+    echo -e "${CYAN}测试硬盘LED...${NC}"
+    local disk_leds=($(get_all_leds))
+    for led in "${disk_leds[@]}"; do
+        if [[ "$led" =~ ^disk[0-9]+$ ]]; then
+            echo "  测试 $led..."
+            for i in "${!test_colors[@]}"; do
+                "$UGREEN_CLI" "$led" -color ${test_colors[$i]} -brightness 64 -on 2>/dev/null || true
+                sleep 0.5
+            done
+            # 恢复默认
+            "$UGREEN_CLI" "$led" -color ${DISK_COLOR_HEALTHY:-255 255 255} -brightness ${DEFAULT_BRIGHTNESS:-64} -on 2>/dev/null || true
+        fi
+    done
+    
+    echo
+    echo -e "${GREEN}✓ LED测试完成${NC}"
+}
+
 # 主菜单
 show_main_menu() {
     clear
@@ -254,9 +894,11 @@ show_main_menu() {
     echo "4. 设置开机自启"
     echo "5. 关闭开机自启"
     echo "6. 查看映射状态"
-    echo "7. 退出"
+    echo "7. 智能设置"
+    echo "8. 灯光设置"
+    echo "9. 退出"
     echo
-    read -p "请选择功能 (1-7): " choice
+    read -p "请选择功能 (1-9): " choice
     
     case $choice in
         1)
@@ -278,6 +920,12 @@ show_main_menu() {
             show_mapping_status
             ;;
         7)
+            show_smart_settings_menu
+            ;;
+        8)
+            show_led_settings_menu
+            ;;
+        9)
             echo -e "${GREEN}感谢使用！${NC}"
             exit 0
             ;;
