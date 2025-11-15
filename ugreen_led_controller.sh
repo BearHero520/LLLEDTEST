@@ -2,7 +2,7 @@
 
 # 绿联LED控制工具 - 智能硬盘映射版 v3.4.6
 # LLLED智能LED控制系统主控制器
-# 项目地址: https://github.com/BearHero520/LLLEDTEST
+# 项目地址: https://github.com/BearHero520/LLLED
 # 版本: 3.4.6 (全功能集成版)
 
 # 全局版本信息（从配置文件读取，如果不存在则使用默认值）
