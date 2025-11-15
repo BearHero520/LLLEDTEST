@@ -368,34 +368,174 @@ auto_detect_disk_mapping() {
     fi
 }
 
+# 初始化所有LED
+initialize_all_leds() {
+    echo -e "${CYAN}正在初始化LED...${NC}"
+    
+    # 重新加载配置
+    load_config
+    
+    # 获取所有LED
+    local leds=($(get_all_leds))
+    local initialized=0
+    
+    # 初始化电源LED
+    if [[ -n "$UGREEN_CLI" ]] && [[ -x "$UGREEN_CLI" ]]; then
+        echo "  初始化电源LED..."
+        "$UGREEN_CLI" power -color ${POWER_COLOR:-128 128 128} -brightness ${DEFAULT_BRIGHTNESS:-64} -on >/dev/null 2>&1 && ((initialized++)) || true
+        
+        # 初始化网络LED（根据当前网络状态）
+        echo "  初始化网络LED..."
+        local network_status=$(check_network_status 2>/dev/null || echo "connected")
+        local network_color
+        case "$network_status" in
+            "internet")
+                network_color="${NETWORK_COLOR_INTERNET:-0 0 255}"
+                ;;
+            "connected")
+                network_color="${NETWORK_COLOR_CONNECTED:-0 255 0}"
+                ;;
+            "disconnected")
+                network_color="${NETWORK_COLOR_DISCONNECTED:-255 0 0}"
+                ;;
+            *)
+                network_color="${NETWORK_COLOR_CONNECTED:-0 255 0}"
+                ;;
+        esac
+        "$UGREEN_CLI" netdev -color $network_color -brightness ${DEFAULT_BRIGHTNESS:-64} -on >/dev/null 2>&1 && ((initialized++)) || true
+        
+        # 初始化硬盘LED
+        if [[ -f "$CONFIG_DIR/disk_mapping.conf" ]]; then
+            echo "  初始化硬盘LED..."
+            local disk_count=0
+            while IFS= read -r line; do
+                [[ "$line" =~ ^[[:space:]]*# ]] && continue
+                [[ -z "${line// }" ]] && continue
+                
+                if [[ "$line" =~ ^HCTL_MAPPING\[([^\]]+)\]=\"([^\"]+)\"$ ]]; then
+                    local device="${BASH_REMATCH[1]}"
+                    local mapping="${BASH_REMATCH[2]}"
+                    IFS='|' read -r hctl led_name serial model size <<< "$mapping"
+                    
+                    if [[ -n "$led_name" && "$led_name" != "none" ]]; then
+                        # 检查硬盘状态并设置LED
+                        if [[ -b "$device" ]]; then
+                            # 硬盘存在，设置为健康状态颜色
+                            "$UGREEN_CLI" "$led_name" -color ${DISK_COLOR_HEALTHY:-255 255 255} -brightness ${DEFAULT_BRIGHTNESS:-64} -on >/dev/null 2>&1 && ((initialized++)) || true
+                        else
+                            # 硬盘不存在，关闭LED
+                            "$UGREEN_CLI" "$led_name" -off >/dev/null 2>&1 || true
+                        fi
+                        ((disk_count++))
+                    fi
+                fi
+            done < "$CONFIG_DIR/disk_mapping.conf"
+            
+            # 处理未映射的LED（如disk4，当只有3个硬盘但检测到4个LED时）
+            # 收集所有已映射的LED名称
+            local mapped_leds=()
+            while IFS= read -r line; do
+                [[ "$line" =~ ^[[:space:]]*# ]] && continue
+                [[ -z "${line// }" ]] && continue
+                
+                if [[ "$line" =~ ^HCTL_MAPPING\[([^\]]+)\]=\"([^\"]+)\"$ ]]; then
+                    local mapping="${BASH_REMATCH[2]}"
+                    IFS='|' read -r hctl led_name serial model size <<< "$mapping"
+                    if [[ -n "$led_name" && "$led_name" != "none" ]]; then
+                        mapped_leds+=("$led_name")
+                    fi
+                fi
+            done < "$CONFIG_DIR/disk_mapping.conf"
+            
+            # 关闭未映射的硬盘LED
+            for led in "${leds[@]}"; do
+                if [[ "$led" =~ ^disk[0-9]+$ ]]; then
+                    local found=false
+                    for mapped_led in "${mapped_leds[@]}"; do
+                        if [[ "$mapped_led" == "$led" ]]; then
+                            found=true
+                            break
+                        fi
+                    done
+                    
+                    # 如果LED不在映射中，关闭它
+                    if [[ "$found" == "false" ]]; then
+                        echo "  关闭未映射的LED: $led"
+                        "$UGREEN_CLI" "$led" -off >/dev/null 2>&1 || true
+                    fi
+                fi
+            done
+        fi
+    fi
+    
+    if [[ $initialized -gt 0 ]]; then
+        echo -e "${GREEN}✓ 已初始化 $initialized 个LED${NC}"
+    else
+        echo -e "${YELLOW}警告: 未能初始化LED，请检查LED控制程序${NC}"
+    fi
+}
+
+# 检查网络状态（用于初始化）
+check_network_status() {
+    local test_host="${NETWORK_TEST_HOST:-8.8.8.8}"
+    local timeout="${NETWORK_TIMEOUT:-3}"
+    
+    # 检查是否有网络接口
+    if ! ip route get "$test_host" >/dev/null 2>&1; then
+        echo "disconnected"
+        return 2
+    fi
+    
+    # 检查是否能连接外网
+    if ping -c 1 -W "$timeout" "$test_host" >/dev/null 2>&1; then
+        echo "internet"
+        return 0
+    fi
+    
+    # 有路由但无法访问外网
+    echo "connected"
+    return 1
+}
+
 # 自动配置所有设置
 auto_configure_all() {
     echo -e "${CYAN}正在自动配置所有设置...${NC}"
     echo
     
     # 1. 检测LED设备
-    echo "步骤 1/3: 检测LED设备..."
+    echo "步骤 1/4: 检测LED设备..."
     auto_detect_leds
     echo
     
     # 2. 检测硬盘映射
-    echo "步骤 2/3: 检测硬盘映射..."
+    echo "步骤 2/4: 检测硬盘映射..."
     auto_detect_disk_mapping
     echo
     
-    # 3. 检查服务状态
-    echo "步骤 3/3: 检查服务状态..."
+    # 3. 初始化LED
+    echo "步骤 3/4: 初始化LED..."
+    initialize_all_leds
+    echo
+    
+    # 4. 检查并重启服务
+    echo "步骤 4/4: 检查服务状态..."
     if systemctl is-active --quiet ugreen-led-monitor.service; then
-        echo -e "${GREEN}✓ 服务正在运行${NC}"
+        echo -e "${GREEN}✓ 服务正在运行，正在重启以应用配置...${NC}"
+        systemctl restart ugreen-led-monitor.service >/dev/null 2>&1 && \
+            sleep 2 && \
+            echo -e "${GREEN}✓ 服务已重启${NC}" || \
+            echo -e "${YELLOW}警告: 服务重启失败，但配置已保存${NC}"
     else
         echo -e "${YELLOW}服务未运行，正在启动...${NC}"
-        systemctl start ugreen-led-monitor.service 2>/dev/null && \
+        systemctl start ugreen-led-monitor.service >/dev/null 2>&1 && \
+            sleep 2 && \
             echo -e "${GREEN}✓ 服务已启动${NC}" || \
             echo -e "${RED}✗ 服务启动失败${NC}"
     fi
     
     echo
     echo -e "${GREEN}✓ 自动配置完成${NC}"
+    echo -e "${CYAN}提示: LED已根据当前状态初始化，守护进程将持续监控并更新LED状态${NC}"
 }
 
 # 恢复默认配置
