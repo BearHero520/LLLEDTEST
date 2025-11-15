@@ -1,154 +1,289 @@
 #!/bin/bash
 
-# UGREEN LED 控制器 - 卸载脚本
-# 版本: 4.0.0
+# LLLED 一键卸载脚本 v3.1.0
+# 支持多种卸载模式的完整LED控制系统移除工具
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
 NC='\033[0m'
 
-# 路径配置
+# 安装路径配置
 INSTALL_DIR="/opt/ugreen-led-controller"
-CONFIG_DIR="$INSTALL_DIR/config"
 LOG_DIR="/var/log/llled"
 SERVICE_NAME="ugreen-led-monitor"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 COMMAND_LINKS=("/usr/local/bin/LLLED" "/usr/bin/LLLED" "/bin/LLLED")
-
-# 从全局配置读取版本号（如果存在）
-VERSION="4.0.0"
-if [[ -f "$CONFIG_DIR/global_config.conf" ]]; then
-    source "$CONFIG_DIR/global_config.conf" 2>/dev/null || true
-    VERSION="${LLLED_VERSION:-$VERSION}"
-fi
+BACKUP_DIR="/tmp/llled_config_backup_$(date +%Y%m%d_%H%M%S)"
 
 # 检查root权限
 check_root() {
-    [[ $EUID -ne 0 ]] && { 
-        echo -e "${RED}需要root权限: sudo bash $0${NC}"
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}❌ 需要root权限运行卸载程序${NC}"
+        echo -e "${YELLOW}请使用: sudo $0${NC}"
         exit 1
-    }
+    fi
 }
 
-# 显示标题
+# 显示卸载程序信息
 show_header() {
+    clear
     echo -e "${CYAN}================================${NC}"
-    echo -e "${CYAN}UGREEN LED 控制器卸载工具 v${VERSION}${NC}"
+    echo -e "${CYAN}     LLLED 卸载程序 v3.1.0     ${NC}"
     echo -e "${CYAN}================================${NC}"
+    echo
+    echo -e "${BLUE}🔧 UGREEN LED 控制系统卸载工具${NC}"
     echo
 }
 
-# 检查安装状态
-check_installation() {
-    local found=false
+# 检查当前安装状态
+check_installation_status() {
+    echo -e "${BLUE}📋 当前安装状态检查:${NC}"
     
+    local status_found=false
+    
+    # 检查安装目录
     if [[ -d "$INSTALL_DIR" ]]; then
         echo -e "${GREEN}✓ 安装目录存在: $INSTALL_DIR${NC}"
-        found=true
+        status_found=true
+    else
+        echo -e "${YELLOW}⚠ 安装目录不存在${NC}"
     fi
     
-    if systemctl list-unit-files 2>/dev/null | grep -q "$SERVICE_NAME"; then
-        echo -e "${GREEN}✓ 系统服务已安装${NC}"
-        found=true
+    # 检查系统服务
+    if systemctl list-unit-files | grep -q "$SERVICE_NAME"; then
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
+            echo -e "${GREEN}✓ 系统服务运行中${NC}"
+        else
+            echo -e "${YELLOW}⚠ 系统服务已安装但未运行${NC}"
+        fi
+        status_found=true
+    else
+        echo -e "${YELLOW}⚠ 系统服务未安装${NC}"
     fi
     
+    # 检查命令链接
+    local link_found=false
     for link in "${COMMAND_LINKS[@]}"; do
         if [[ -L "$link" || -f "$link" ]]; then
             echo -e "${GREEN}✓ 命令链接存在: $link${NC}"
-            found=true
+            link_found=true
+            status_found=true
             break
         fi
     done
     
-    if [[ "$found" == "false" ]]; then
-        echo -e "${YELLOW}未检测到安装，退出${NC}"
+    if [[ "$link_found" == "false" ]]; then
+        echo -e "${YELLOW}⚠ 未找到命令链接${NC}"
+    fi
+    
+    # 检查配置文件
+    if [[ -f "$INSTALL_DIR/config/disk_mapping.conf" ]]; then
+        echo -e "${GREEN}✓ 配置文件存在${NC}"
+        status_found=true
+    else
+        echo -e "${YELLOW}⚠ 配置文件不存在${NC}"
+    fi
+    
+    echo
+    
+    if [[ "$status_found" == "false" ]]; then
+        echo -e "${RED}❌ 未检测到LLLED安装，退出卸载程序${NC}"
         exit 0
     fi
+}
+
+# 显示卸载选项
+show_uninstall_options() {
+    echo -e "${YELLOW}🗂️ 卸载选项:${NC}"
+    echo "1. 🗑️  完全卸载 (删除所有文件和配置)"
+    echo "2. 🔧 保留配置卸载 (保留配置文件以便将来重装)"
+    echo "3. ⏸️  仅停止服务 (不删除任何文件)"
+    echo "4. 📦 备份后完全卸载 (先备份配置再完全删除)"
+    echo "5. ❌ 取消卸载"
+    echo
+    
+    while true; do
+        read -p "请选择卸载方式 (1-5): " uninstall_choice
+        case $uninstall_choice in
+            1)
+                echo -e "${RED}选择: 完全卸载${NC}"
+                UNINSTALL_MODE="complete"
+                BACKUP_CONFIG=false
+                STOP_ONLY=false
+                break
+                ;;
+            2)
+                echo -e "${YELLOW}选择: 保留配置卸载${NC}"
+                UNINSTALL_MODE="keep-config"
+                BACKUP_CONFIG=false
+                STOP_ONLY=false
+                break
+                ;;
+            3)
+                echo -e "${BLUE}选择: 仅停止服务${NC}"
+                UNINSTALL_MODE="stop-only"
+                BACKUP_CONFIG=false
+                STOP_ONLY=true
+                break
+                ;;
+            4)
+                echo -e "${MAGENTA}选择: 备份后完全卸载${NC}"
+                UNINSTALL_MODE="backup-complete"
+                BACKUP_CONFIG=true
+                STOP_ONLY=false
+                break
+                ;;
+            5)
+                echo -e "${GREEN}✅ 取消卸载${NC}"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}❌ 无效选择，请重新选择 (1-5)${NC}"
+                ;;
+        esac
+    done
     echo
 }
 
-# 关闭所有LED
-turn_off_leds() {
-    echo -e "${BLUE}关闭所有LED...${NC}"
+# 停止服务
+echo "停止系统服务..."
+systemctl stop ugreen-led-monitor.service 2>/dev/null
+systemctl disable ugreen-led-monitor.service 2>/dev/null
+rm -f "$SERVICE_FILE"
+systemctl daemon-reload
+
+# 删除命令链接
+echo "删除LLLED命令..."
+rm -f "$COMMAND_LINK"
+
+# 删除安装目录
+echo "删除程序文件..."
+rm -rf "$INSTALL_DIR"
+
+# 清理其他可能的安装位置
+echo "清理其他位置..."
+rm -f /usr/bin/LLLED
+rm -f /bin/LLLED
+rm -rf /etc/ugreen-led-controller
+rm -rf /var/lib/ugreen-led-controller
+
+# 验证清理结果
+if command -v LLLED >/dev/null 2>&1; then
+    echo -e "${RED}警告: LLLED命令仍然可用，可能存在其他安装${NC}"
+    which LLLED
+else
+    echo -e "${GREEN}✓ LLLED已完全卸载${NC}"
+fi
+
+echo "卸载完成！"
+    echo "  1) 完全卸载 (删除所有文件)"
+    echo "  2) 保留配置卸载 (保留配置文件)"
+    echo "  3) 仅停用服务 (保留程序文件)"
+    echo "  0) 取消卸载"
+    echo
+    echo -ne "${YELLOW}请选择 [0-3]: ${NC}"
+    read -n 1 choice
+    echo
+    echo
     
-    if [[ -f "$INSTALL_DIR/ugreen_leds_cli" ]]; then
-        "$INSTALL_DIR/ugreen_leds_cli" all -off >/dev/null 2>&1 || true
-        
-        # 备用方法
-        local leds=("power" "netdev" "disk1" "disk2" "disk3" "disk4" "disk5" "disk6" "disk7" "disk8")
-        for led in "${leds[@]}"; do
-            "$INSTALL_DIR/ugreen_leds_cli" "$led" -off >/dev/null 2>&1 || true
-        done
-        echo -e "${GREEN}✓ LED已关闭${NC}"
-    else
-        echo -e "${YELLOW}  LED控制程序不存在，跳过${NC}"
-    fi
+    case "$choice" in
+        1) UNINSTALL_TYPE="complete" ;;
+        2) UNINSTALL_TYPE="keep-config" ;;
+        3) UNINSTALL_TYPE="disable-only" ;;
+        0) 
+            echo -e "${GREEN}卸载已取消${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}无效选择，卸载已取消${NC}"
+            exit 1
+            ;;
+    esac
 }
 
-# 停止并移除服务
+# 停止并移除systemd服务
 remove_service() {
     echo -e "${BLUE}停止并移除系统服务...${NC}"
     
-    if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    if systemctl is-active --quiet ugreen-led-monitor.service; then
+        echo "  停止服务..."
+        systemctl stop ugreen-led-monitor.service
     fi
     
-    if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
-        systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+    if systemctl is-enabled --quiet ugreen-led-monitor.service 2>/dev/null; then
+        echo "  禁用服务..."
+        systemctl disable ugreen-led-monitor.service
     fi
     
     if [[ -f "$SERVICE_FILE" ]]; then
+        echo "  删除服务文件..."
         rm -f "$SERVICE_FILE"
     fi
     
-    systemctl daemon-reload 2>/dev/null || true
+    systemctl daemon-reload
     echo -e "${GREEN}✓ 系统服务已移除${NC}"
 }
 
 # 移除命令链接
-remove_command_links() {
-    echo -e "${BLUE}移除命令链接...${NC}"
+remove_command() {
+    echo -e "${BLUE}移除LLLED命令链接...${NC}"
     
-    local removed=false
-    for link in "${COMMAND_LINKS[@]}"; do
-        if [[ -L "$link" || -f "$link" ]]; then
-            rm -f "$link" 2>/dev/null && removed=true
-        fi
-    done
-    
-    if [[ "$removed" == "true" ]]; then
-        echo -e "${GREEN}✓ 命令链接已移除${NC}"
+    if [[ -L "$COMMAND_LINK" ]]; then
+        rm -f "$COMMAND_LINK"
+        echo -e "${GREEN}✓ LLLED命令链接已移除${NC}"
     else
-        echo -e "${YELLOW}  未找到命令链接${NC}"
+        echo -e "${YELLOW}  命令链接不存在${NC}"
     fi
 }
 
-# 备份配置
+# 备份配置文件
 backup_config() {
-    local backup_dir="/tmp/llled_backup_$(date +%Y%m%d_%H%M%S)"
+    echo -e "${BLUE}备份配置文件...${NC}"
     
-    if [[ -d "$CONFIG_DIR" ]]; then
-        echo -e "${BLUE}备份配置文件...${NC}"
-        mkdir -p "$backup_dir"
+    if [[ -d "$INSTALL_DIR" ]]; then
+        mkdir -p "$BACKUP_DIR"
         
-        if cp -r "$CONFIG_DIR" "$backup_dir/" 2>/dev/null; then
-            echo -e "${GREEN}✓ 配置已备份到: $backup_dir${NC}"
-        else
-            echo -e "${YELLOW}  备份失败，继续卸载${NC}"
+        # 备份配置文件
+        if [[ -f "$INSTALL_DIR/config/led_mapping.conf" ]]; then
+            cp "$INSTALL_DIR/config/led_mapping.conf" "$BACKUP_DIR/"
+            echo "  已备份: led_mapping.conf"
         fi
+        
+        # 备份自定义脚本
+        if [[ -d "$INSTALL_DIR/custom" ]]; then
+            cp -r "$INSTALL_DIR/custom" "$BACKUP_DIR/"
+            echo "  已备份: custom目录"
+        fi
+        
+        echo -e "${GREEN}✓ 配置文件已备份到: $BACKUP_DIR${NC}"
     fi
+}
+
+# 关闭所有LED
+turn_off_leds() {
+    echo -e "${BLUE}关闭所有LED灯...${NC}"
+    
+    if [[ -f "$INSTALL_DIR/scripts/turn_off_all_leds.sh" ]]; then
+        bash "$INSTALL_DIR/scripts/turn_off_all_leds.sh" >/dev/null 2>&1
+    elif [[ -f "$INSTALL_DIR/ugreen_leds_cli" ]]; then
+        local leds=("power" "netdev" "disk1" "disk2" "disk3" "disk4")
+        for led in "${leds[@]}"; do
+            "$INSTALL_DIR/ugreen_leds_cli" "$led" -off >/dev/null 2>&1
+        done
+    fi
+    
+    echo -e "${GREEN}✓ LED灯已关闭${NC}"
 }
 
 # 移除安装目录
 remove_install_dir() {
-    local mode="$1"
-    
     echo -e "${BLUE}移除安装目录...${NC}"
     
-    case "$mode" in
+    case "$UNINSTALL_TYPE" in
         "complete")
             if [[ -d "$INSTALL_DIR" ]]; then
                 rm -rf "$INSTALL_DIR"
@@ -158,173 +293,136 @@ remove_install_dir() {
         "keep-config")
             if [[ -d "$INSTALL_DIR" ]]; then
                 # 删除程序文件，保留配置
-                rm -f "$INSTALL_DIR"/*.sh 2>/dev/null
-                rm -f "$INSTALL_DIR/ugreen_leds_cli" 2>/dev/null
-                rm -rf "$INSTALL_DIR/scripts" 2>/dev/null
-                rm -rf "$INSTALL_DIR/systemd" 2>/dev/null
-                echo -e "${GREEN}✓ 程序文件已删除，配置已保留${NC}"
+                rm -f "$INSTALL_DIR"/*.sh
+                rm -f "$INSTALL_DIR/ugreen_leds_cli"
+                rm -rf "$INSTALL_DIR/scripts"
+                rm -rf "$INSTALL_DIR/systemd"
+                echo -e "${GREEN}✓ 程序文件已删除，配置文件已保留${NC}"
             fi
             ;;
-        "stop-only")
-            echo -e "${YELLOW}  保留所有文件，仅停用服务${NC}"
+        "disable-only")
+            echo -e "${YELLOW}保留所有文件，仅停用服务${NC}"
             ;;
     esac
 }
 
-# 清理进程
+# 清理相关进程
 cleanup_processes() {
     echo -e "${BLUE}清理相关进程...${NC}"
     
-    local pids=$(pgrep -f "led_daemon\|ugreen.*led" 2>/dev/null)
+    # 查找并终止相关进程
+    local pids=$(pgrep -f "ugreen.*led" 2>/dev/null)
     if [[ -n "$pids" ]]; then
-        kill $pids 2>/dev/null || true
-        sleep 1
-        # 强制kill
-        kill -9 $pids 2>/dev/null || true
-        echo -e "${GREEN}✓ 进程已清理${NC}"
-    else
-        echo -e "${YELLOW}  未发现相关进程${NC}"
+        echo "  终止相关进程: $pids"
+        kill $pids 2>/dev/null
     fi
-}
-
-# 显示卸载选项
-show_uninstall_menu() {
-    echo -e "${YELLOW}卸载选项:${NC}"
-    echo "1. 完全卸载 (删除所有文件和配置)"
-    echo "2. 保留配置卸载 (保留配置文件)"
-    echo "3. 仅停止服务 (保留所有文件)"
-    echo "4. 取消"
-    echo
     
-    while true; do
-        read -p "请选择 (1-4): " choice
-        case "$choice" in
-            1)
-                UNINSTALL_MODE="complete"
-                BACKUP_CONFIG=true
-                break
-                ;;
-            2)
-                UNINSTALL_MODE="keep-config"
-                BACKUP_CONFIG=false
-                break
-                ;;
-            3)
-                UNINSTALL_MODE="stop-only"
-                BACKUP_CONFIG=false
-                break
-                ;;
-            4)
-                echo -e "${GREEN}卸载已取消${NC}"
-                exit 0
-                ;;
-            *)
-                echo -e "${RED}无效选择，请重新输入${NC}"
-                ;;
-        esac
-    done
-    echo
+    echo -e "${GREEN}✓ 进程清理完成${NC}"
 }
 
-# 确认卸载
-confirm_uninstall() {
-    echo -e "${RED}警告: 即将卸载 UGREEN LED 控制器${NC}"
-    echo
-    read -p "确认卸载? (y/N): " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo -e "${GREEN}卸载已取消${NC}"
-        exit 0
+# 清理cron任务
+cleanup_cron() {
+    echo -e "${BLUE}清理cron任务...${NC}"
+    
+    # 检查root的crontab
+    if crontab -l 2>/dev/null | grep -q "ugreen\|LLLED"; then
+        echo "  发现相关cron任务，请手动清理:"
+        crontab -l | grep -E "ugreen|LLLED" | sed 's/^/    /'
+        echo -e "${YELLOW}  请运行 'crontab -e' 手动删除上述任务${NC}"
+    else
+        echo -e "${GREEN}✓ 未发现相关cron任务${NC}"
     fi
-    echo
 }
 
 # 显示卸载结果
-show_result() {
+show_uninstall_result() {
     echo
     echo -e "${CYAN}================================${NC}"
-    echo -e "${CYAN}卸载完成${NC}"
+    echo -e "${CYAN}        卸载完成${NC}"
     echo -e "${CYAN}================================${NC}"
     echo
     
-    case "$UNINSTALL_MODE" in
+    case "$UNINSTALL_TYPE" in
         "complete")
-            echo -e "${GREEN}✓ 完全卸载完成${NC}"
+            echo -e "${GREEN}LLLED已完全卸载${NC}"
             echo "  • 所有程序文件已删除"
             echo "  • 所有配置文件已删除"
             echo "  • 系统服务已移除"
             echo "  • 命令链接已移除"
             ;;
         "keep-config")
-            echo -e "${GREEN}✓ 程序已卸载，配置已保留${NC}"
+            echo -e "${GREEN}LLLED程序已卸载，配置文件已保留${NC}"
             echo "  • 程序文件已删除"
-            echo "  • 配置文件已保留在: $CONFIG_DIR"
+            echo "  • 配置文件已保留在: $INSTALL_DIR/config/"
             echo "  • 系统服务已移除"
             echo "  • 命令链接已移除"
             ;;
-        "stop-only")
-            echo -e "${GREEN}✓ 服务已停用${NC}"
+        "disable-only")
+            echo -e "${GREEN}LLLED服务已停用${NC}"
             echo "  • 系统服务已停止和禁用"
-            echo "  • 所有文件已保留"
+            echo "  • 程序文件已保留"
+            echo "  • 配置文件已保留"
             echo "  • 可使用 $INSTALL_DIR/ugreen_led_controller.sh 手动启动"
             ;;
     esac
     
+    if [[ -d "$BACKUP_DIR" ]]; then
+        echo
+        echo -e "${BLUE}备份位置: $BACKUP_DIR${NC}"
+    fi
+    
     echo
-    echo -e "${YELLOW}如需重新安装:${NC}"
-    echo "  curl -fsSL https://raw.githubusercontent.com/BearHero520/LLLEDTEST/main/quick_install.sh | sudo bash"
+    echo -e "${YELLOW}如需重新安装，请运行:${NC}"
+    echo "  wget -O- https://raw.githubusercontent.com/BearHero520/LLLED/main/quick_install.sh | sudo bash"
     echo
 }
 
 # 主函数
 main() {
-    show_header
+    show_uninstall_info
     check_root
-    check_installation
-    show_uninstall_menu
     confirm_uninstall
     
-    echo -e "${CYAN}开始卸载...${NC}"
+    echo -e "${CYAN}开始卸载LLLED...${NC}"
     echo
     
     # 执行卸载步骤
-    if [[ "$BACKUP_CONFIG" == "true" ]]; then
-        backup_config
-    fi
-    
+    backup_config
     turn_off_leds
     cleanup_processes
     remove_service
-    remove_command_links
-    remove_install_dir "$UNINSTALL_MODE"
+    remove_command
+    remove_install_dir
+    cleanup_cron
     
-    show_result
+    show_uninstall_result
 }
 
 # 处理命令行参数
 case "${1:-}" in
     "--force")
+        # 强制卸载，不询问确认
+        UNINSTALL_TYPE="complete"
         check_root
-        check_installation
-        UNINSTALL_MODE="complete"
-        BACKUP_CONFIG=true
         backup_config
         turn_off_leds
         cleanup_processes
         remove_service
-        remove_command_links
-        remove_install_dir "$UNINSTALL_MODE"
-        echo -e "${GREEN}强制卸载完成${NC}"
+        remove_command
+        remove_install_dir
+        cleanup_cron
+        echo -e "${GREEN}LLLED强制卸载完成${NC}"
         ;;
     "--help"|"-h")
-        echo "UGREEN LED 控制器卸载工具 v$VERSION"
+        echo "LLLED卸载工具"
         echo
-        echo "用法: sudo $0 [选项]"
+        echo "用法: $0 [选项]"
         echo
         echo "选项:"
         echo "  --force    强制完全卸载，不询问确认"
-        echo "  --help     显示帮助信息"
+        echo "  --help     显示此帮助信息"
         echo
-        echo "交互式卸载: sudo $0"
+        echo "交互式卸载: $0"
         ;;
     *)
         main
