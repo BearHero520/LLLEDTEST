@@ -5,10 +5,11 @@
 # 项目地址: https://github.com/BearHero520/LLLEDTEST
 # 版本: 3.4.6 (全功能集成版)
 
-# 全局版本信息
-VERSION="3.4.6"
-PROJECT_NAME="LLLED智能LED控制系统"
-LAST_UPDATE="2025-09-08"
+# 全局版本信息（从配置文件读取，如果不存在则使用默认值）
+# 版本号由 quick_install.sh 设置到 global_config.conf
+VERSION="${LLLED_VERSION:-3.4.6}"
+PROJECT_NAME="${PROJECT_NAME:-LLLED智能LED控制系统}"
+LAST_UPDATE="${LAST_UPDATE:-2025-09-08}"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -515,6 +516,17 @@ restore_system_leds() {
     read -p "按回车键继续..."
 }
 
+# 一键智能设置（调用后台服务管理）
+smart_setup() {
+    echo -e "${CYAN}一键智能设置${NC}"
+    echo
+    echo -e "${YELLOW}正在执行智能配置...${NC}"
+    echo
+    
+    # 调用后台服务管理进行设置
+    manage_service
+}
+
 # 主菜单
 show_main_menu() {
     clear
@@ -522,18 +534,17 @@ show_main_menu() {
     
     echo -e "${YELLOW}主菜单:${NC}"
     echo
-    echo "1. 设置灯光"
+    echo "1. 一键智能设置"
     echo "2. 硬盘设置"
     echo "3. 后台服务管理"
-    echo "4. 恢复系统LED"
-    echo "5. 系统信息"
-    echo "6. 退出"
+    echo "4. 系统信息"
+    echo "5. 退出"
     echo
-    read -p "请选择功能 (1-6): " choice
+    read -p "请选择功能 (1-5): " choice
     
     case $choice in
         1)
-            manage_lights
+            smart_setup
             ;;
         2)
             manage_disks
@@ -542,13 +553,10 @@ show_main_menu() {
             manage_service
             ;;
         4)
-            restore_system_leds
-            ;;
-        5)
             show_system_info
             read -p "按回车键继续..."
             ;;
-        6)
+        5)
             echo -e "${GREEN}感谢使用 $PROJECT_NAME${NC}"
             exit 0
             ;;

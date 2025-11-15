@@ -227,6 +227,23 @@ done
 
 log_install "下载完成: $download_success/$download_total 文件成功"
 
+# 更新 global_config.conf 中的版本号
+if [[ -f "config/global_config.conf" ]]; then
+    log_install "更新 global_config.conf 版本号..."
+    # 更新版本号
+    if grep -q "^LLLED_VERSION=" "config/global_config.conf"; then
+        sed -i "s/^LLLED_VERSION=.*/LLLED_VERSION=\"$LLLED_VERSION\"/" "config/global_config.conf"
+    else
+        # 如果不存在，在文件开头添加
+        sed -i "1i# 全局版本号\nLLLED_VERSION=\"$LLLED_VERSION\"" "config/global_config.conf"
+    fi
+    # 更新项目名称（如果存在）
+    if grep -q "^PROJECT_NAME=" "config/global_config.conf"; then
+        sed -i "s/^PROJECT_NAME=.*/PROJECT_NAME=\"LLLED智能LED控制系统\"/" "config/global_config.conf"
+    fi
+    log_install "SUCCESS: 版本号已更新为 $LLLED_VERSION"
+fi
+
 # 验证核心文件
 log_install "验证核心文件..."
 core_files=("ugreen_leds_cli" "scripts/led_daemon.sh" "scripts/smart_disk_activity_hctl.sh" "config/global_config.conf")
