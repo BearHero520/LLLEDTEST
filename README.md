@@ -1,546 +1,220 @@
-# LLLED - 绿联 LED 智能控制系统
+# UGREEN LED 控制器 v4.0.0
 
-> 🚀 **专业的绿联 NAS LED 控制解决方案**  
-> 支持 DX4600 Pro、DX4700+、DXP4800+ 等设备的智能 LED 控制和硬盘状态监控
+专为绿联 UGREEN 系列 NAS 设备设计的 LED 控制系统（简化重构版）
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-3.6.3-blue.svg)](https://github.com/BearHero520/LLLED)
-[![Shell Script](https://img.shields.io/badge/language-Shell-green.svg)](https://github.com/BearHero520/LLLED)
-[![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](https://github.com/BearHero520/LLLED)
-
-## ✨ 核心特性
-
-### 🎯 智能硬盘监控
-
--   **HCTL 智能映射** - 自动检测硬盘位置和状态
--   **多状态显示** - 活动/空闲/休眠/故障硬盘不同颜色显示
--   **实时监控** - 实时反映硬盘读写活动状态
--   **故障预警** - 硬盘异常时自动闪烁提醒
-
-### 🎨 丰富的视觉效果
-
--   **15 种预设模式** - 从实用到装饰应有尽有
--   **彩虹跑马灯** - 炫酷的 RGB 渐变效果
--   **呼吸灯效果** - 柔和的亮度变化
--   **自定义颜色** - 支持 RGB 颜色完全自定义
-
-### 🌙 人性化体验
-
--   **夜间模式** - 低亮度白光，不影响睡眠
--   **节能模式** - 仅保留电源指示灯
--   **定位模式** - 快速闪烁便于机柜定位
--   **静音模式** - 完全关闭所有 LED
-
-### ⚡ 便捷操作
-
--   **一键安装** - 无需复杂配置，30 秒完成安装
--   **命令行支持** - 丰富的 CLI 命令选项
--   **交互界面** - 直观的菜单式操作
--   **完全卸载** - 支持保留配置选项
-
-## 🔧 支持设备
-
-| 设备型号            | 支持状态    | 说明     |
-| ------------------- | ----------- | -------- |
-| UGREEN DX4600 Pro   | ✅ 完全支持 | 官方测试 |
-| UGREEN DX4700+      | ✅ 完全支持 | 社区验证 |
-| UGREEN DXP2800      | ✅ 完全支持 | 社区验证 |
-| UGREEN DXP4800      | ✅ 完全支持 | 社区验证 |
-| UGREEN DXP4800 Plus | ✅ 完全支持 | 主要支持 |
-| UGREEN DXP6800 Pro  | ✅ 完全支持 | 社区验证 |
-| UGREEN DXP8800 Plus | ✅ 完全支持 | 社区验证 |
-
-## 💻 系统要求
-
--   **操作系统**: Linux (Debian/Ubuntu/TrueNAS/Proxmox 等)
--   **内核模块**: `i2c-dev` (自动加载)
--   **权限**: Root 权限
--   **硬件**: 绿联兼容设备
-
-## 🚀 快速开始
-
-### 一键安装 (推荐)
+## 快速安装
 
 ```bash
-# 方法1: 使用 wget (推荐)
-wget -O- "https://raw.githubusercontent.com/BearHero520/LLLED/main/quick_install.sh" | sudo bash
+# 一键安装
+curl -fsSL https://raw.githubusercontent.com/BearHero520/LLLEDTEST/main/quick_install.sh | sudo bash
 
-# 方法2: 使用 curl
-curl -sSL "https://raw.githubusercontent.com/BearHero520/LLLED/main/quick_install.sh" | sudo bash
-```
-
-### 安装完成后立即使用
-
-```bash
-# 启动交互式控制面板 (需要root权限)
+# 安装完成后自动启动服务
+# 使用主控制命令：
 sudo LLLED
-
-# 直接运行智能监控 (推荐)
-sudo LLLED --smart-activity
 ```
 
-## 🖼️ 功能展示
+## 支持设备
 
-### 交互式控制面板
+-   UGREEN DX4600 Pro (4 盘位)
+-   UGREEN DX4700+ (4 盘位)
+-   UGREEN DXP2800 (2 盘位)
+-   UGREEN DXP4800 (4 盘位)
+-   UGREEN DXP4800 Plus (4 盘位)
+-   UGREEN DXP6800 Pro (6 盘位)
+-   UGREEN DXP8800 Plus (8 盘位)
 
-启动 `sudo LLLED` 后的主界面，提供直观的菜单选择：
+## 主要功能
 
-![启动目录](img/启动目录.png)
+### 核心功能菜单
 
-### 智能监控效果
+1. **关闭所有 LED** - 关闭所有 LED 指示灯
+2. **打开所有 LED** - 打开所有 LED 指示灯
+3. **节能模式** - 启用低亮度节能模式
+4. **设置开机自启** - 启用系统服务开机自启
+5. **关闭开机自启** - 禁用系统服务开机自启
+6. **查看映射状态** - 查看 LED 和硬盘映射关系
 
-硬盘活动状态的实时 LED 显示效果：
+### LED 映射说明
 
-![监控介绍](img/监控介绍.png)
+-   **4800plus 等设备**: 通常为 1 个电源灯 + 1 个网络灯 + 4 个机械硬盘灯
+-   **M2 SSD**: 通常没有对应的 LED
+-   **映射关系**: 在安装时自动检测并配置，基于 HCTL 顺序建立映射
 
-### ⚡ 常用命令
+### 颜色配置
+
+所有颜色都可以在配置文件中自定义（`/opt/ugreen-led-controller/config/led_config.conf`）：
+
+#### 电源 LED
+
+-   `POWER_COLOR`: 电源灯颜色（默认: 128 128 128 淡白色）
+
+#### 网络 LED
+
+-   `NETWORK_COLOR_DISCONNECTED`: 断网状态（默认: 255 0 0 红色）
+-   `NETWORK_COLOR_CONNECTED`: 联网状态（默认: 0 255 0 绿色）
+-   `NETWORK_COLOR_INTERNET`: 连接外网状态（默认: 0 0 255 蓝色）
+
+#### 硬盘 LED
+
+-   `DISK_COLOR_HEALTHY`: 活跃/健康状态（默认: 255 255 255 白色）
+-   `DISK_COLOR_STANDBY`: 休眠状态（默认: 200 200 200 淡白色）
+-   `DISK_COLOR_UNHEALTHY`: 不健康状态（默认: 255 0 0 红色）
+-   `DISK_COLOR_NO_DISK`: 无硬盘状态（默认: 0 0 0 关闭）
+
+## 使用方法
+
+### 交互式菜单
 
 ```bash
-# 核心功能 (需要root权限)
-sudo LLLED                      # 交互式控制面板
-sudo LLLED --smart-activity     # 智能硬盘活动监控 ⭐推荐
-sudo LLLED --disk-status        # 基础硬盘状态显示
-sudo LLLED --hctl-activity      # HCTL智能映射活动监控
-
-# 灯光效果
-sudo LLLED --rainbow            # 彩虹跑马灯效果
-sudo LLLED --breathing          # 呼吸灯效果
-sudo LLLED --flowing            # 流水灯效果
-sudo LLLED --custom-modes       # 15种自定义模式菜单
-
-# 实用模式
-sudo LLLED --night-mode         # 夜间模式 (低亮度)
-sudo LLLED --eco-mode           # 节能模式 (仅电源灯)
-sudo LLLED --locate-mode        # 定位模式 (快速闪烁)
-sudo LLLED --turn-off           # 关闭所有LED
-
-# 配置和测试
-sudo LLLED --configure          # 配置LED映射
-sudo LLLED --test-mapping       # 测试LED映射
-sudo LLLED --verify-detection   # 验证硬盘检测
-sudo LLLED --help              # 显示完整帮助
-
-# 状态查看
-sudo LLLED --status        # 查看当前LED状态
-sudo LLLED --logs          # 查看运行日志
-sudo LLLED --disk-info     # 查看硬盘HCTL信息
+sudo LLLED
 ```
 
-## 📁 项目结构
-
-```
-LLLED/
-├── 📄 ugreen_led_controller.sh      # 主控制脚本
-├── 📄 quick_install.sh              # 一键安装脚本
-├── 📄 uninstall.sh                  # 卸载脚本
-├── 📄 verify_detection.sh           # 硬盘检测验证
-├── 📄 quick_led_test.sh             # LED快速测试
-├── 📄 ugreen_leds_cli               # LED控制核心程序
-├── 📂 config/
-│   ├── global_config.conf           # 全局配置
-│   ├── led_mapping.conf             # LED映射配置
-│   ├── disk_mapping.conf            # 硬盘映射配置
-│   └── hctl_mapping.conf            # HCTL映射配置
-├── 📂 scripts/
-│   ├── smart_disk_activity_hctl.sh  # HCTL智能监控
-│   ├── disk_status_leds.sh          # 硬盘状态显示
-│   ├── custom_modes.sh              # 自定义模式集合
-│   ├── rainbow_effect.sh            # 彩虹效果
-│   ├── led_test.sh                  # LED测试
-│   ├── led_mapping_test.sh          # 映射测试
-│   ├── configure_mapping_optimized.sh # 映射配置
-│   ├── led_daemon.sh                # LED守护进程
-│   └── turn_off_all_leds.sh         # 关闭所有LED
-└── 📂 systemd/
-    └── ugreen-led-monitor.service   # 系统服务文件
-```
-
-## 🎯 核心功能详解
-
-### 智能硬盘监控
-
-**HCTL 智能映射**
-
--   自动检测硬盘的 HCTL (Host:Channel:Target:Lun) 信息
--   智能匹配硬盘位置与 LED 位置
--   支持热插拔设备的动态检测
-
-**多状态显示**
-
--   🟢 **活动状态** - 高亮度绿色 (RGB: 0,255,0)
--   🟡 **空闲状态** - 中等亮度黄色 (RGB: 255,255,0)
--   🔵 **休眠状态** - 低亮度蓝色 (RGB: 0,0,255)
--   🔴 **故障状态** - 闪烁红光 (RGB: 255,0,0)
-
-### 15 种自定义模式
-
-**硬盘状态模式**
-
-1. 智能活动监控 - 根据 I/O 活动显示
-2. 简单状态显示 - 仅显示健康状态
-3. 温度监控模式 - 根据温度变色
-4. 负载监控模式 - 根据磁盘负载显示
-
-**装饰效果模式** 5. 呼吸灯效果 - 缓慢明暗变化 6. 流水灯效果 - LED 依次点亮 7. 闪烁模式 - 同步闪烁 8. 渐变彩虹 - RGB 颜色循环
-
-**实用功能模式** 9. 夜间模式 - 低亮度白光 10. 定位模式 - 快速闪烁定位 11. 节能模式 - 仅电源灯亮 12. 静音模式 - 关闭所有 LED
-
-**自定义选项** 13. 自定义颜色 - RGB 颜色设置 14. 自定义亮度 - 亮度级别调整 15. 自定义闪烁 - 闪烁频率设置
-
-## 🔧 安装与配置
-
-### 一键安装过程
-
-1. **环境检查** - 检测系统兼容性和权限
-2. **依赖下载** - 下载 ugreen_leds_cli 二进制文件
-3. **文件部署** - 复制所有脚本到 `/opt/ugreen-led-controller/`
-4. **权限设置** - 设置正确的执行权限
-5. **命令链接** - 创建 `LLLED` 全局命令
-6. **模块加载** - 自动加载 i2c-dev 模块
-7. **配置初始化** - 创建默认配置文件
-
-### 手动安装 (高级用户)
+### 命令行模式
 
 ```bash
-# 1. 创建安装目录
-sudo mkdir -p /opt/ugreen-led-controller
+# 关闭所有LED
+sudo LLLED off
 
-# 2. 下载LED控制程序
-sudo wget -O /opt/ugreen-led-controller/ugreen_leds_cli \
-    https://github.com/miskcoo/ugreen_leds_controller/releases/download/v0.1-debian12/ugreen_leds_cli
-sudo chmod +x /opt/ugreen-led-controller/ugreen_leds_cli
+# 打开所有LED
+sudo LLLED on
 
-# 3. 克隆项目
-git clone https://github.com/BearHero520/LLLED.git
-cd LLLED
+# 启用节能模式
+sudo LLLED power-save
 
-# 4. 复制文件
-sudo cp -r * /opt/ugreen-led-controller/
-sudo chmod +x /opt/ugreen-led-controller/*.sh
-sudo chmod +x /opt/ugreen-led-controller/scripts/*.sh
+# 设置开机自启
+sudo LLLED enable
 
-# 5. 创建命令链接
-sudo ln -sf /opt/ugreen-led-controller/ugreen_led_controller.sh /usr/local/bin/LLLED
+# 关闭开机自启
+sudo LLLED disable
 
-# 6. 加载I2C模块
-sudo modprobe i2c-dev
+# 查看映射状态
+sudo LLLED status
+
+# 服务管理
+sudo LLLED start    # 启动服务
+sudo LLLED stop     # 停止服务
+sudo LLLED restart  # 重启服务
 ```
 
-### 配置文件说明
+## 配置文件
 
-**全局配置** (`config/global_config.conf`)
+### 主要配置文件
+
+-   `/opt/ugreen-led-controller/config/led_config.conf` - LED 配置和颜色设置
+-   `/opt/ugreen-led-controller/config/disk_mapping.conf` - 硬盘映射关系
+-   `/opt/ugreen-led-controller/config/global_config.conf` - 全局配置
+
+### 自定义颜色
+
+编辑 `/opt/ugreen-led-controller/config/led_config.conf`：
 
 ```bash
-# 基础设置
-LED_BRIGHTNESS=64
-SLEEP_INTERVAL=1
-DEBUG_MODE=false
+# 修改电源灯颜色（RGB值 0-255）
+POWER_COLOR="128 128 128"
 
-# 默认模式
-DEFAULT_MODE="smart_activity"
-AUTO_START=false
+# 修改网络灯颜色
+NETWORK_COLOR_DISCONNECTED="255 0 0"    # 断网 - 红色
+NETWORK_COLOR_CONNECTED="0 255 0"        # 联网 - 绿色
+NETWORK_COLOR_INTERNET="0 0 255"         # 外网 - 蓝色
+
+# 修改硬盘灯颜色
+DISK_COLOR_HEALTHY="255 255 255"         # 健康 - 白色
+DISK_COLOR_STANDBY="200 200 200"         # 休眠 - 淡白色
+DISK_COLOR_UNHEALTHY="255 0 0"           # 不健康 - 红色
 ```
 
-**LED 映射配置** (`config/led_mapping.conf`)
+修改后重启服务生效：
 
 ```bash
-# LED位置映射
-POWER_LED=0
-NETDEV_LED=1
-DISK1_LED=2
-DISK2_LED=3
-DISK3_LED=4
-DISK4_LED=5
+sudo systemctl restart ugreen-led-monitor.service
 ```
 
-**HCTL 映射配置** (`config/hctl_mapping.conf`)
+## 服务管理
+
+### 查看服务状态
 
 ```bash
-# HCTL到LED的映射关系
-# 格式: HCTL=LED_NAME
-2:0:0:0=disk1
-2:0:1:0=disk2
-2:0:2:0=disk3
-2:0:3:0=disk4
-```
-
-## 🔄 系统服务
-
-### 安装系统服务
-
-```bash
-# 自动安装服务 (推荐)
-sudo LLLED --install-service
-
-# 手动启动服务
-sudo systemctl start ugreen-led-monitor.service
-sudo systemctl enable ugreen-led-monitor.service
-
-# 查看服务状态
 sudo systemctl status ugreen-led-monitor.service
 ```
 
-### 服务管理
+### 查看日志
 
 ```bash
-# 启动服务
-sudo systemctl start ugreen-led-monitor.service
-
-# 停止服务
-sudo systemctl stop ugreen-led-monitor.service
-
-# 重启服务
-sudo systemctl restart ugreen-led-monitor.service
-
 # 查看服务日志
 sudo journalctl -u ugreen-led-monitor.service -f
+
+# 查看日志文件
+sudo tail -f /var/log/llled/ugreen-led-monitor.log
 ```
 
-## 🔍 故障排除
+## 工作原理
 
-### 常见问题及解决方案
+1. **安装时**: 自动检测可用 LED 和硬盘，建立映射关系
+2. **运行时**: 守护进程定期检测硬盘状态和网络状态
+3. **状态更新**: 根据检测结果自动更新 LED 颜色和亮度
 
-**问题 1: 命令未找到**
+### 硬盘状态检测
 
-```bash
-# 解决方案
-sudo ln -sf /opt/ugreen-led-controller/ugreen_led_controller.sh /usr/local/bin/LLLED
+-   使用 `hdparm -C` 检测硬盘活动/休眠状态
+-   使用 `smartctl` 检测硬盘健康状态
+-   无硬盘时自动关闭对应 LED
+
+### 网络状态检测
+
+-   断网: 无法获取路由
+-   联网: 有路由但无法访问外网
+-   连接外网: 可以 ping 通外网服务器
+
+## 项目结构
+
+```
+/opt/ugreen-led-controller/
+├── ugreen_led_controller.sh    # 主控制脚本
+├── ugreen_leds_cli             # LED控制程序
+├── config/                      # 配置文件目录
+│   ├── led_config.conf          # LED配置
+│   ├── disk_mapping.conf        # 硬盘映射
+│   └── global_config.conf       # 全局配置
+├── scripts/                     # 脚本目录
+│   └── led_daemon.sh            # 守护进程
+└── systemd/                     # 服务文件
+    └── ugreen-led-monitor.service
 ```
 
-**问题 2: LED 不亮或反应异常**
+## 常见问题
 
-```bash
-# 诊断步骤
-sudo LLLED --verify-detection    # 验证硬盘检测
-sudo LLLED --test-mapping        # 测试LED映射
-sudo LLLED --status              # 查看LED状态
-```
+### Q: 如何重新检测 LED 和硬盘映射？
 
-**问题 3: 硬盘检测失败**
+A: 重新运行安装脚本，或手动编辑配置文件。
 
-```bash
-# 解决方案
-lsblk -S -o NAME,HCTL            # 查看硬盘HCTL信息
-sudo LLLED --configure           # 重新配置映射
-```
+### Q: 如何修改 LED 颜色？
 
-**问题 4: I2C 设备未找到**
+A: 编辑 `/opt/ugreen-led-controller/config/led_config.conf`，然后重启服务。
 
-```bash
-# 解决方案
-sudo modprobe i2c-dev            # 加载I2C模块
-sudo i2cdetect -l                # 检查I2C设备
-```
+### Q: 服务无法启动怎么办？
 
-**问题 5: 权限问题**
+A: 检查日志：`sudo journalctl -u ugreen-led-monitor.service -n 50`
 
-```bash
-# 解决方案 - 确保使用root权限
-sudo LLLED
-```
+### Q: M2 SSD 有 LED 吗？
 
-### 诊断命令组合
+A: 通常 M2 SSD 没有对应的 LED，只有机械硬盘槽位有 LED。
 
-```bash
-# 完整诊断流程
-sudo LLLED --status              # 1. 检查LED状态
-sudo LLLED --disk-info           # 2. 检查硬盘信息
-sudo LLLED --verify-detection    # 3. 验证硬盘检测
-sudo LLLED --test-mapping        # 4. 测试LED映射
-sudo LLLED --logs                # 5. 查看运行日志
-```
+## 版本历史
 
-### 性能优化
+### v4.0.0 (重构版)
 
-```bash
-# 减少CPU使用率 - 调整检测间隔
-sudo nano /opt/ugreen-led-controller/config/global_config.conf
-# 修改: SLEEP_INTERVAL=3  (默认为1秒)
+-   简化项目结构
+-   重构配置文件系统
+-   简化功能菜单
+-   删除彩虹灯功能
+-   优化守护进程
+-   安装后自动启动服务
 
-# 查看系统资源使用
-top -p $(pgrep -f ugreen_led)
-```
+## 许可证
 
-## 🗑️ 卸载
+MIT License
 
-### 完全卸载
+## 参考
 
-```bash
-# 方法1: 使用安装目录的卸载脚本
-sudo /opt/ugreen-led-controller/uninstall.sh
-
-# 方法2: 直接下载卸载脚本
-wget -O- https://raw.githubusercontent.com/BearHero520/LLLED/main/uninstall.sh | sudo bash
-
-# 方法3: 通过LLLED命令卸载
-sudo LLLED --uninstall
-```
-
-### 卸载选项
-
--   **完全卸载** - 删除所有文件和配置
--   **保留配置卸载** - 删除程序文件，保留配置文件
--   **仅停用服务** - 停用服务，保留所有文件
-
-## 📚 使用教程
-
-### 新手快速上手
-
-1. **安装**: 执行一键安装命令
-2. **启动**: 运行 `sudo LLLED` 进入交互界面
-3. **选择**: 选择 "智能硬盘活动监控" (推荐)
-4. **享受**: 观察硬盘 LED 随活动状态变化
-
-### 常用操作流程
-
-```bash
-# 1. 检查系统状态
-sudo LLLED --status              # 查看LED状态
-lsblk -S -o NAME,HCTL            # 查看硬盘映射
-
-# 2. 启动监控
-sudo LLLED --smart-activity      # 启动智能监控
-
-# 3. 查看日志 (另开终端)
-sudo LLLED --logs                # 查看运行日志
-
-# 4. 如有问题进行诊断
-sudo LLLED --verify-detection    # 验证硬盘检测
-sudo LLLED --test-mapping        # 测试LED映射
-```
-
-### 进阶用户配置
-
-1. **自定义映射**: 使用 `sudo LLLED --configure` 配置 LED 映射
-2. **性能调优**: 调整配置文件中的检测频率
-3. **服务模式**: 使用 `sudo LLLED --install-service` 实现开机自启
-4. **个性化**: 使用 `sudo LLLED --custom-modes` 创建独特效果
-
-## � 命令行参考
-
-### LLLED 完整命令列表
-
-```bash
-# 基础功能
-sudo LLLED                      # 交互式控制面板
-sudo LLLED --smart-activity     # 智能硬盘活动监控 (推荐)
-sudo LLLED --disk-status        # 基础硬盘状态显示
-sudo LLLED --hctl-activity      # HCTL智能映射监控
-
-# 灯光效果
-sudo LLLED --rainbow            # 彩虹跑马灯
-sudo LLLED --breathing          # 呼吸灯效果
-sudo LLLED --flowing            # 流水灯效果
-sudo LLLED --custom-modes       # 自定义模式菜单
-
-# 实用模式
-sudo LLLED --night-mode         # 夜间模式
-sudo LLLED --eco-mode           # 节能模式
-sudo LLLED --locate-mode        # 定位模式
-sudo LLLED --turn-off           # 关闭所有LED
-
-# 配置工具
-sudo LLLED --configure          # 配置LED映射
-sudo LLLED --test-mapping       # 测试LED映射
-sudo LLLED --verify-detection   # 验证硬盘检测
-
-# 状态查看
-sudo LLLED --status             # 查看当前LED状态
-sudo LLLED --logs               # 查看运行日志
-sudo LLLED --disk-info          # 查看硬盘HCTL信息
-
-# 系统管理
-sudo LLLED --install-service    # 安装systemd服务
-sudo LLLED --uninstall          # 卸载程序
-sudo LLLED --version            # 显示版本信息
-sudo LLLED --help               # 显示帮助信息
-```
-
-### ugreen_leds_cli 命令参考
-
-```bash
-# 基本语法
-ugreen_leds_cli <led_name> -color R,G,B -brightness <0-255>
-
-# 示例
-ugreen_leds_cli disk1 -color 255,0,0 -brightness 128  # 红色，50%亮度
-ugreen_leds_cli all -off                               # 关闭所有LED
-ugreen_leds_cli all -status                            # 查看所有LED状态
-```
-
-## 🤝 社区与支持
-
-### 获取帮助
-
--   **GitHub Issues**: [提交问题](https://github.com/BearHero520/LLLED/issues)
--   **讨论区**: [GitHub Discussions](https://github.com/BearHero520/LLLED/discussions)
--   **文档**: [在线文档](https://github.com/BearHero520/LLLED/wiki)
-
-### 贡献代码
-
-1. Fork 本项目
-2. 创建功能分支: `git checkout -b feature/AmazingFeature`
-3. 提交更改: `git commit -m 'Add some AmazingFeature'`
-4. 推送分支: `git push origin feature/AmazingFeature`
-5. 提交 Pull Request
-
-### 反馈与建议
-
-欢迎通过以下方式参与项目：
-
--   🐛 报告 Bug
--   💡 功能建议
--   📝 文档改进
--   🌐 多语言支持
--   📦 设备适配
-
-## 📊 项目统计
-
--   **支持设备**: 7+ 款绿联 NAS 设备
--   **功能模式**: 15+ 种预设模式
--   **安装方式**: 一键安装，30 秒完成
--   **配置选项**: 可完全自定义
--   **社区用户**: 持续增长中
-
-## � 更新日志
-
-### v3.6.3 (2025-09-08)
-
--   ✨ 重构项目结构，优化用户体验
--   🐛 修复一键安装脚本的下载超时问题
--   🚀 改进 HCTL 智能映射算法
--   📝 完全重写使用文档
-
-### v3.4.6 (2025-09-07)
-
--   ✨ 新增全功能集成版主控制器
--   🔧 优化配置文件结构
--   ⚡ 提升 LED 响应速度和稳定性
-
-### v2.1.2 (2025-09-06)
-
--   ✨ 新增 HCTL 智能映射功能
--   🐛 修复 LED 映射错误问题
--   🚀 优化安装脚本，支持更多设备
-
-## 📋 许可证
-
-本项目基于 [MIT 许可证](LICENSE) 开源。
-
-## 📖 参考资料
-
--   [绿联 DX4600 Pro LED 控制模块分析](https://blog.miskcoo.com/2024/05/ugreen-dx4600-pro-led-controller)
--   [miskcoo/ugreen_leds_controller](https://github.com/miskcoo/ugreen_leds_controller)
--   [TrueNAS LED 控制指南](https://gist.github.com/Kerryliu/c380bb6b3b69be5671105fc23e19b7e8)
-
----
-
-<div align="center">
-
-**🌟 如果这个项目对您有帮助，请点击 Star 支持我们！🌟**
-
-[![Star History Chart](https://api.star-history.com/svg?repos=BearHero520/LLLED&type=Date)](https://star-history.com/#BearHero520/LLLED&Date)
-
-_让您的绿联 NAS LED 更智能、更美观！_
-
-</div>
+-   [原始项目](https://github.com/miskcoo/ugreen_leds_controller)
+-   [博客文章](https://blog.miskcoo.com/2024/05/ugreen-dx4600-pro-led-controller)
