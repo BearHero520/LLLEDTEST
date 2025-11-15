@@ -121,18 +121,23 @@ turn_on_all_leds() {
     echo -e "${GREEN}✓ 所有LED已打开${NC}"
 }
 
-# 节能模式
-power_save_mode() {
-    echo -e "${CYAN}启用节能模式...${NC}"
-    local leds=($(get_all_leds))
-    local color="64 64 64"  # 暗灰色
-    local brightness="16"   # 低亮度
-    
-    for led in "${leds[@]}"; do
-        "$UGREEN_CLI" "$led" -color $color -brightness $brightness -on 2>/dev/null || true
-    done
-    
-    echo -e "${GREEN}✓ 节能模式已启用${NC}"
+# 智能模式 - 启动后台监控服务
+smart_mode() {
+    echo -e "${CYAN}启动智能模式（后台监控服务）...${NC}"
+    if systemctl start ugreen-led-monitor.service; then
+        echo -e "${GREEN}✓ 智能模式已启动${NC}"
+        echo -e "${BLUE}后台服务正在运行，将自动监控硬盘状态并控制LED${NC}"
+        
+        # 显示服务状态
+        if systemctl is-active --quiet ugreen-led-monitor.service; then
+            echo -e "${GREEN}服务状态: 运行中${NC}"
+        else
+            echo -e "${YELLOW}服务状态: 启动中...${NC}"
+        fi
+    else
+        echo -e "${RED}✗ 启动智能模式失败${NC}"
+        echo -e "${YELLOW}请检查服务是否已正确安装${NC}"
+    fi
 }
 
 # 设置开机自启
@@ -250,7 +255,7 @@ show_main_menu() {
     echo
     echo "1. 关闭所有LED"
     echo "2. 打开所有LED"
-    echo "3. 节能模式"
+    echo "3. 智能模式"
     echo "4. 设置开机自启"
     echo "5. 关闭开机自启"
     echo "6. 查看映射状态"
@@ -266,7 +271,7 @@ show_main_menu() {
             turn_on_all_leds
             ;;
         3)
-            power_save_mode
+            smart_mode
             ;;
         4)
             enable_autostart
@@ -302,10 +307,10 @@ case "${1:-}" in
         check_installation
         turn_on_all_leds
         ;;
-    "power-save"|"节能")
+    "smart"|"智能"|"intelligent")
         load_config
         check_installation
-        power_save_mode
+        smart_mode
         ;;
     "enable"|"启用")
         enable_autostart
@@ -334,7 +339,7 @@ case "${1:-}" in
         echo "命令:"
         echo "  off, 关闭        - 关闭所有LED"
         echo "  on, 打开         - 打开所有LED"
-        echo "  power-save, 节能 - 启用节能模式"
+        echo "  smart, 智能      - 启动智能模式（后台监控服务）"
         echo "  enable, 启用     - 设置开机自启"
         echo "  disable, 禁用    - 关闭开机自启"
         echo "  status, 状态     - 查看映射状态"
